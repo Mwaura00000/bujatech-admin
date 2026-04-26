@@ -3,8 +3,22 @@
 import React, { useState } from 'react';
 import { Toaster, toast } from 'sonner';
 
+// --- THE TYPESCRIPT BLUEPRINT (The Fix) ---
+interface Car {
+  id: string;
+  make: string;
+  model: string;
+  plate: string;
+  status: string;
+  rate: number;
+  returnDate?: string;     // The '?' makes it optional
+  customerName?: string;
+  customerPhone?: string;
+  note?: string;
+}
+
 // --- MOCK FLEET DATA ---
-const initialFleet = [
+const initialFleet: Car[] = [
   { id: '1', make: 'Toyota', model: 'Land Cruiser Prado', plate: 'KDC 123A', status: 'available', rate: 12000 },
   { id: '2', make: 'Mazda', model: 'CX-5', plate: 'KDG 456B', status: 'rented', rate: 8000, returnDate: 'Today, 4:00 PM', customerName: 'Jane Doe', customerPhone: '0700123456' },
   { id: '3', make: 'Toyota', model: 'Axio', plate: 'KCW 789C', status: 'rented', rate: 3500, returnDate: 'Apr 28, 10:00 AM', customerName: 'Brian K.', customerPhone: '0722000000' },
@@ -16,7 +30,9 @@ const initialFleet = [
 export default function BujatechAdmin() {
   const [activeTab, setActiveTab] = useState<'fleet' | 'rentals' | 'customers' | 'reports'>('fleet');
   const [searchQuery, setSearchQuery] = useState('');
-  const [fleet, setFleet] = useState(initialFleet);
+  
+  // Apply the blueprint to our state
+  const [fleet, setFleet] = useState<Car[]>(initialFleet);
 
   // --- SMART BOOKING WIZARD STATES ---
   const [isBookingOpen, setIsBookingOpen] = useState(false);
@@ -46,9 +62,7 @@ export default function BujatechAdmin() {
     const returnTime = new Date(bookingData.returnDate).getTime();
     
     if (returnTime > pickupTime) {
-      // Calculate difference in hours
       const diffInHours = (returnTime - pickupTime) / (1000 * 60 * 60);
-      // Divide by 24 and round UP to the nearest whole day
       billedDays = Math.ceil(diffInHours / 24);
       totalCost = billedDays * selectedCarDetails.rate;
     }
