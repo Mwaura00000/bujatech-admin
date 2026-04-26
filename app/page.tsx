@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Toaster, toast } from 'sonner';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
-// --- THE TYPESCRIPT BLUEPRINT (The Fix) ---
+// --- THE TYPESCRIPT BLUEPRINTS ---
 interface Car {
   id: string;
   make: string;
@@ -11,10 +13,21 @@ interface Car {
   plate: string;
   status: string;
   rate: number;
-  returnDate?: string;     // The '?' makes it optional
+  returnDate?: string;     
   customerName?: string;
   customerPhone?: string;
   note?: string;
+}
+
+interface Customer {
+  id: string; 
+  name: string; 
+  phone: string; 
+  idNumber: string;
+  altName: string; 
+  altPhone: string; 
+  altId: string; 
+  altRelationship: string;
 }
 
 // --- MOCK FLEET DATA ---
@@ -27,11 +40,89 @@ const initialFleet: Car[] = [
   { id: '6', make: 'Toyota', model: 'Harrier', plate: 'KDF 987F', status: 'available', rate: 6000 },
 ];
 
+// --- MOCK RECURRING CUSTOMERS ---
+const returningCustomers: Customer[] = [
+  { id: 'c1', name: 'Jane Doe', phone: '0700123456', idNumber: '30123456', altName: 'John Doe', altPhone: '0711123456', altId: '28123456', altRelationship: 'Spouse' },
+  { id: 'c2', name: 'Brian K.', phone: '0722000000', idNumber: '31555666', altName: 'Sarah K.', altPhone: '0733000000', altId: '29555666', altRelationship: 'Sibling' },
+];
+
+// --- CUSTOM TOUCH SIGNATURE PAD COMPONENT ---
+const SignaturePad = ({ onSign }: { onSign: (data: string) => void }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+
+  const getCoordinates = (e: any) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches && e.touches.length > 0) {
+      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    }
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const startDrawing = (e: any) => {
+    e.preventDefault();
+    const { x, y } = getCoordinates(e);
+    const ctx = canvasRef.current?.getContext('2d');
+    if (ctx) {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#0f172a';
+      setIsDrawing(true);
+    }
+  };
+
+  const draw = (e: any) => {
+    e.preventDefault();
+    if (!isDrawing) return;
+    const { x, y } = getCoordinates(e);
+    const ctx = canvasRef.current?.getContext('2d');
+    if (ctx) {
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+  };
+
+  const stopDrawing = () => {
+    setIsDrawing(false);
+    if (canvasRef.current) {
+      onSign(canvasRef.current.toDataURL('image/png'));
+    }
+  };
+
+  const clear = () => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+      onSign('');
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl overflow-hidden relative">
+        <canvas
+          ref={canvasRef}
+          width={400}
+          height={150}
+          className="w-full touch-none cursor-crosshair"
+          onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseOut={stopDrawing}
+          onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing}
+        />
+        <div className="absolute bottom-2 left-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest pointer-events-none">Sign Here X</div>
+      </div>
+      <button type="button" onClick={clear} className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:text-red-700 transition">Clear Signature</button>
+    </div>
+  );
+};
+
 export default function BujatechAdmin() {
   const [activeTab, setActiveTab] = useState<'fleet' | 'rentals' | 'customers' | 'reports'>('fleet');
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Apply the blueprint to our state
   const [fleet, setFleet] = useState<Car[]>(initialFleet);
 
   // --- SMART BOOKING WIZARD STATES ---
@@ -40,14 +131,21 @@ export default function BujatechAdmin() {
     carId: '',
     customerName: '',
     phone: '',
-    emergencyPhone: '',
     idNumber: '',
     destination: '',
     purpose: 'Personal / Leisure',
     pickupDate: '',
     returnDate: '',
-    idImage: null as File | null,
-    dlImage: null as File | null,
+    // --- UPDATED: 4 DOCUMENT SLOTS ---
+    idFront: null as File | null,
+    idBack: null as File | null,
+    dlFront: null as File | null,
+    dlBack: null as File | null,
+    altName: '',
+    altPhone: '',
+    altId: '',
+    altRelationship: '',
+    signature: '' 
   });
 
   // --- LIVE MATH: 24-HOUR BILLING CYCLE CALCULATOR ---
@@ -82,12 +180,55 @@ export default function BujatechAdmin() {
   });
 
   // --- ACTIONS ---
-  const handleSubmitBooking = (e: React.FormEvent) => {
+  
+  // Auto-fill returning customer data
+  const handleReturningCustomer = (customerId: string) => {
+    const customer = returningCustomers.find(c => c.id === customerId);
+    if (customer) {
+      setBookingData(prev => ({
+        ...prev, 
+        customerName: customer.name, 
+        phone: customer.phone, 
+        idNumber: customer.idNumber,
+        altName: customer.altName, 
+        altPhone: customer.altPhone, 
+        altId: customer.altId, 
+        altRelationship: customer.altRelationship
+      }));
+      toast.success("Customer Profile Loaded!");
+    }
+  };
+
+  // Generate PDF Contract
+  const generateContractPDF = async () => {
+    const element = document.getElementById('receipt-pdf-template');
+    if (!element) return;
+    
+    element.style.display = 'block';
+    const canvas = await html2canvas(element, { scale: 2 });
+    element.style.display = 'none';
+
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+    
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save(`Bujatech_Contract_${bookingData.customerName.replace(/\s+/g, '_')}.pdf`);
+  };
+
+  const handleSubmitBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!bookingData.idImage || !bookingData.dlImage) {
-      toast.error("Missing Documents", { description: "Please upload both the ID and Driver's License."});
+    // --- UPDATED VALIDATION FOR ALL 4 DOCUMENTS ---
+    if (!bookingData.idFront || !bookingData.idBack || !bookingData.dlFront || !bookingData.dlBack) {
+      toast.error("Missing Documents", { description: "Please upload the Front and Back of BOTH the ID and Driver's License."});
       return;
+    }
+
+    if (!bookingData.signature) { 
+      toast.error("Signature Required", { description: "Client must sign the contract." }); 
+      return; 
     }
 
     if (billedDays <= 0) {
@@ -95,9 +236,9 @@ export default function BujatechAdmin() {
       return;
     }
 
-    toast.loading("Generating secure digital contract...");
+    toast.loading("Generating secure digital contract & PDF...");
 
-    setTimeout(() => {
+    setTimeout(async () => {
       setFleet(prevFleet => 
         prevFleet.map(car => 
           car.id === bookingData.carId 
@@ -106,11 +247,19 @@ export default function BujatechAdmin() {
         )
       );
 
+      // Generate the PDF
+      await generateContractPDF();
+
       toast.dismiss();
-      toast.success("Contract Active!", { description: `${bookingData.customerName} has leased the vehicle for ${billedDays} days.` });
+      toast.success("Contract Active & Downloaded!", { description: `${bookingData.customerName} has leased the vehicle for ${billedDays} days.` });
       
       setIsBookingOpen(false);
-      setBookingData({ carId: '', customerName: '', phone: '', emergencyPhone: '', idNumber: '', destination: '', purpose: 'Personal / Leisure', pickupDate: '', returnDate: '', idImage: null, dlImage: null });
+      setBookingData({ 
+        carId: '', customerName: '', phone: '', idNumber: '', destination: '', purpose: 'Personal / Leisure', 
+        pickupDate: '', returnDate: '', 
+        idFront: null, idBack: null, dlFront: null, dlBack: null,
+        altName: '', altPhone: '', altId: '', altRelationship: '', signature: '' 
+      });
     }, 2000);
   };
 
@@ -118,6 +267,80 @@ export default function BujatechAdmin() {
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans pb-20 lg:pb-0 flex">
       <Toaster position="top-center" richColors />
       
+      {/* --- HIDDEN PDF RECEIPT TEMPLATE --- */}
+      <div id="receipt-pdf-template" className="hidden bg-white p-10 w-[800px] text-slate-900 absolute top-0 left-0 -z-50 border-2 border-slate-900">
+        <div className="flex justify-between items-end border-b-4 border-slate-900 pb-6 mb-6">
+          <div>
+            <h1 className="text-4xl font-black tracking-tighter uppercase">Bujatech</h1>
+            <p className="text-sm font-bold tracking-widest text-slate-500 uppercase mt-1">Car Hire & Fleet Management</p>
+          </div>
+          <div className="text-right">
+            <h2 className="text-2xl font-black text-blue-600 uppercase">Lease Agreement</h2>
+            <p className="font-bold text-slate-500">Date: {new Date().toLocaleDateString()}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-8 mb-8">
+          <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
+            <h3 className="font-black uppercase tracking-widest text-sm text-slate-400 mb-4 border-b pb-2">Client Details</h3>
+            <p className="font-bold text-lg">{bookingData.customerName}</p>
+            <p className="font-semibold text-slate-600">ID: {bookingData.idNumber}</p>
+            <p className="font-semibold text-slate-600">Phone: {bookingData.phone}</p>
+          </div>
+          <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
+            <h3 className="font-black uppercase tracking-widest text-sm text-slate-400 mb-4 border-b pb-2">Vehicle Details</h3>
+            <p className="font-bold text-lg">{selectedCarDetails?.make} {selectedCarDetails?.model}</p>
+            <p className="font-semibold text-slate-600">Plate: <span className="bg-slate-200 px-2 py-0.5 rounded">{selectedCarDetails?.plate}</span></p>
+            <p className="font-semibold text-slate-600">Daily Rate: KSh {selectedCarDetails?.rate.toLocaleString()}</p>
+          </div>
+        </div>
+
+        <table className="w-full mb-8 border-collapse">
+          <thead>
+            <tr className="bg-slate-900 text-white text-left uppercase text-xs tracking-widest">
+              <th className="p-4">Description</th>
+              <th className="p-4 text-center">Days</th>
+              <th className="p-4 text-right">Total (KSh)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b border-slate-200 text-lg font-bold">
+              <td className="p-4">
+                Vehicle Hire ({bookingData.pickupDate ? new Date(bookingData.pickupDate).toLocaleDateString() : ''} to {bookingData.returnDate ? new Date(bookingData.returnDate).toLocaleDateString() : ''})<br/>
+                <span className="text-sm text-slate-500 font-medium">Destination: {bookingData.destination} | Purpose: {bookingData.purpose}</span>
+              </td>
+              <td className="p-4 text-center">{billedDays}</td>
+              <td className="p-4 text-right">{totalCost.toLocaleString()}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div className="flex justify-end mb-12">
+          <div className="bg-slate-100 p-6 rounded-xl w-72 text-right border border-slate-300">
+            <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">Total Amount Due</p>
+            <p className="text-3xl font-black text-slate-900">KSh {totalCost.toLocaleString()}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-12 pt-8 border-t-2 border-slate-200">
+          <div>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Client Signature</p>
+            {bookingData.signature && <img src={bookingData.signature} alt="Client Signature" className="h-16 mb-2" />}
+            <div className="border-t border-slate-400 w-full pt-2">
+              <p className="font-bold">{bookingData.customerName}</p>
+              <p className="text-xs text-slate-500">I agree to the terms and conditions of Bujatech Car Hire. I am fully liable for the vehicle during the lease period.</p>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Guarantor / Alt Contact</p>
+            <div className="mt-[72px] border-t border-slate-400 w-full pt-2">
+              <p className="font-bold">{bookingData.altName} ({bookingData.altRelationship})</p>
+              <p className="text-xs text-slate-500">ID: {bookingData.altId} | Phone: {bookingData.altPhone}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* --- DESKTOP SIDEBAR --- */}
       <aside className="hidden lg:flex w-64 bg-slate-900 text-white flex-col h-screen fixed shadow-2xl z-20">
         <div className="p-6 border-b border-slate-800">
@@ -142,8 +365,6 @@ export default function BujatechAdmin() {
 
       {/* --- MAIN CONTENT AREA --- */}
       <main className="flex-1 lg:ml-64 relative min-h-screen">
-        
-        {/* MOBILE HEADER */}
         <header className="bg-slate-900 text-white p-5 sticky top-0 z-30 shadow-md lg:hidden flex justify-between items-center">
           <div>
             <h1 className="text-xl font-black tracking-tight">Bujatech</h1>
@@ -155,7 +376,6 @@ export default function BujatechAdmin() {
         </header>
 
         <div className="p-4 sm:p-8">
-          
           <div className="hidden lg:flex justify-between items-end mb-8">
             <div>
               <h2 className="text-3xl font-black text-slate-900">Fleet Overview</h2>
@@ -169,8 +389,6 @@ export default function BujatechAdmin() {
 
           {activeTab === 'fleet' && (
             <div className="space-y-6 animate-in fade-in duration-500">
-              
-              {/* --- SEARCH BAR --- */}
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none">
                   <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -192,7 +410,6 @@ export default function BujatechAdmin() {
                 )}
               </div>
 
-              {/* THE FLEET GRID */}
               {filteredFleet.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-center px-4">
                   <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center mb-4">
@@ -310,13 +527,21 @@ export default function BujatechAdmin() {
                   required
                   value={bookingData.carId}
                   onChange={(e) => setBookingData({...bookingData, carId: e.target.value})}
-                  className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-xl outline-none focus:border-blue-500 text-slate-900 font-bold"
+                  className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-xl outline-none focus:border-blue-500 text-slate-900 font-bold mb-4"
                 >
                   <option value="" disabled>-- Choose a car --</option>
                   {availableCars.map(car => (
                     <option key={car.id} value={car.id}>{car.make} {car.model} ({car.plate})</option>
                   ))}
                 </select>
+
+                {/* Instant Rate Display */}
+                {selectedCarDetails && (
+                  <div className="bg-emerald-50 border-2 border-emerald-200 p-4 rounded-xl flex justify-between items-center animate-in zoom-in-95">
+                     <span className="text-xs font-black text-emerald-800 uppercase tracking-widest">Confirmed Base Rate</span>
+                     <span className="text-xl font-black text-emerald-700">KSh {selectedCarDetails.rate.toLocaleString()} <span className="text-sm">/ day</span></span>
+                  </div>
+                )}
               </div>
 
               {/* Step 2: Trip Logistics & Billing */}
@@ -373,12 +598,19 @@ export default function BujatechAdmin() {
                 ) : null}
               </div>
 
-              {/* Step 3: Client Identity & Emergency Contact */}
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 border-b border-slate-100 pb-2">3. Identity & Contact</label>
+              {/* Step 3: Client Identity & Alternative Contact */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+                <div className="flex justify-between items-end border-b border-slate-100 pb-2 mb-1">
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest">3. Identity & Contacts</label>
+                  <select onChange={(e) => handleReturningCustomer(e.target.value)} className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 rounded-md px-2 py-1 outline-none cursor-pointer">
+                    <option value="">+ Load Recurring Client</option>
+                    {returningCustomers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>)}
+                  </select>
+                </div>
                 
+                {/* Primary Client */}
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Full Name</label>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Primary Client Name</label>
                   <input type="text" required value={bookingData.customerName} onChange={e => setBookingData({...bookingData, customerName: e.target.value})} placeholder="John Doe" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
                 </div>
                 
@@ -393,48 +625,127 @@ export default function BujatechAdmin() {
                   </div>
                 </div>
 
-                <div className="pt-2">
-                  <label className="block text-[10px] font-bold text-red-500 uppercase tracking-widest mb-1 ml-1">🚨 Emergency Contact (Required)</label>
-                  <input type="tel" required value={bookingData.emergencyPhone} onChange={e => setBookingData({...bookingData, emergencyPhone: e.target.value})} placeholder="Relative or Spouse Number" className="w-full p-4 bg-red-50 border border-red-200 rounded-xl outline-none focus:border-red-500 font-bold placeholder:text-red-300" />
+                {/* Alternative Contact / Guarantor */}
+                <div className="pt-4 border-t border-slate-100 space-y-4">
+                  <label className="block text-[10px] font-black text-slate-800 uppercase tracking-widest">Alternative Contact / Guarantor (Required)</label>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Full Name</label>
+                      <input type="text" required value={bookingData.altName} onChange={e => setBookingData({...bookingData, altName: e.target.value})} placeholder="Jane Doe" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Relationship</label>
+                      <select required value={bookingData.altRelationship} onChange={e => setBookingData({...bookingData, altRelationship: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold">
+                        <option value="" disabled>Select Relationship</option>
+                        <option value="Spouse">Spouse</option>
+                        <option value="Parent">Parent</option>
+                        <option value="Sibling">Sibling</option>
+                        <option value="Colleague">Colleague</option>
+                        <option value="Friend">Friend</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Alt. ID Number</label>
+                      <input type="text" required value={bookingData.altId} onChange={e => setBookingData({...bookingData, altId: e.target.value})} placeholder="e.g. 28123456" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Alt. Phone Number</label>
+                      <input type="tel" required value={bookingData.altPhone} onChange={e => setBookingData({...bookingData, altPhone: e.target.value})} placeholder="07XX XXX XXX" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Step 4: Document Uploads */}
+              {/* Step 4: DIGITAL SIGNATURE */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 border-b border-slate-100 pb-2">4. Legal Digital Signature</label>
+                <p className="text-xs font-medium text-slate-500 mb-4 mt-2">I agree to the terms of the lease and accept liability for the vehicle during the selected period.</p>
+                <SignaturePad onSign={(data) => setBookingData({...bookingData, signature: data})} />
+                {bookingData.signature && (
+                  <div className="mt-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> 
+                    Signature Captured Securely
+                  </div>
+                )}
+              </div>
+
+              {/* Step 5: Document Uploads (UPDATED: 4 SLOTS) */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-20">
-                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">4. Secure Documents</label>
+                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">5. Secure Documents (Front & Back)</label>
+                
                 <div className="grid grid-cols-2 gap-4">
-                  {/* ID Upload */}
+                  {/* ID Front Upload */}
                   <label className="cursor-pointer">
                     <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
-                      if(e.target.files && e.target.files[0]) setBookingData({...bookingData, idImage: e.target.files[0]})
+                      if(e.target.files && e.target.files[0]) setBookingData({...bookingData, idFront: e.target.files[0]})
                     }} />
-                    {bookingData.idImage ? (
-                      <div className="h-24 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
-                        <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                        <span className="text-[10px] font-black uppercase tracking-widest">ID Attached</span>
+                    {bookingData.idFront ? (
+                      <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
+                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
+                        <span className="text-[9px] font-black uppercase tracking-widest">ID Front Attached</span>
                       </div>
                     ) : (
-                      <div className="h-24 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
-                        <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-center px-2">National ID<br/>(Front)</span>
+                      <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
+                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-center">ID (Front)</span>
                       </div>
                     )}
                   </label>
 
-                  {/* DL Upload */}
+                  {/* ID Back Upload */}
                   <label className="cursor-pointer">
                     <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
-                       if(e.target.files && e.target.files[0]) setBookingData({...bookingData, dlImage: e.target.files[0]})
+                      if(e.target.files && e.target.files[0]) setBookingData({...bookingData, idBack: e.target.files[0]})
                     }} />
-                    {bookingData.dlImage ? (
-                      <div className="h-24 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
-                        <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                        <span className="text-[10px] font-black uppercase tracking-widest">DL Attached</span>
+                    {bookingData.idBack ? (
+                      <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
+                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
+                        <span className="text-[9px] font-black uppercase tracking-widest">ID Back Attached</span>
                       </div>
                     ) : (
-                      <div className="h-24 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
-                        <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-center px-2">Driver's<br/>License</span>
+                      <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
+                         <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-center">ID (Back)</span>
+                      </div>
+                    )}
+                  </label>
+
+                  {/* DL Front Upload */}
+                  <label className="cursor-pointer">
+                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
+                       if(e.target.files && e.target.files[0]) setBookingData({...bookingData, dlFront: e.target.files[0]})
+                    }} />
+                    {bookingData.dlFront ? (
+                      <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
+                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
+                        <span className="text-[9px] font-black uppercase tracking-widest">DL Front Attached</span>
+                      </div>
+                    ) : (
+                      <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
+                         <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-center">DL (Front)</span>
+                      </div>
+                    )}
+                  </label>
+
+                  {/* DL Back Upload */}
+                  <label className="cursor-pointer">
+                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
+                       if(e.target.files && e.target.files[0]) setBookingData({...bookingData, dlBack: e.target.files[0]})
+                    }} />
+                    {bookingData.dlBack ? (
+                      <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
+                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
+                        <span className="text-[9px] font-black uppercase tracking-widest">DL Back Attached</span>
+                      </div>
+                    ) : (
+                      <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
+                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-center">DL (Back)</span>
                       </div>
                     )}
                   </label>
@@ -446,10 +757,28 @@ export default function BujatechAdmin() {
               <button onClick={() => setIsBookingOpen(false)} className="px-6 py-4 bg-slate-100 text-slate-600 font-bold rounded-xl transition hover:bg-slate-200">Cancel</button>
               <button 
                 onClick={handleSubmitBooking}
-                disabled={!bookingData.carId || !bookingData.customerName || !bookingData.emergencyPhone || billedDays <= 0}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl transition shadow-lg shadow-blue-600/30 disabled:opacity-50 disabled:shadow-none"
+                disabled={
+                  !bookingData.carId || 
+                  !bookingData.customerName || 
+                  !bookingData.altName || 
+                  !bookingData.altId || 
+                  !bookingData.altPhone || 
+                  !bookingData.altRelationship || 
+                  !bookingData.signature || 
+                  !bookingData.idFront ||
+                  !bookingData.idBack ||
+                  !bookingData.dlFront ||
+                  !bookingData.dlBack ||
+                  billedDays <= 0
+                }
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl transition shadow-lg shadow-blue-600/30 disabled:opacity-50 disabled:shadow-none flex justify-center items-center gap-2"
               >
-                {billedDays > 0 ? `Confirm (KSh ${totalCost.toLocaleString()})` : 'Select Dates'}
+                {billedDays > 0 && bookingData.signature ? (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    Confirm & Download PDF
+                  </>
+                ) : 'Complete Form & Sign'}
               </button>
             </div>
           </div>
