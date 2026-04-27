@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Toaster, toast } from 'sonner';
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
+import { supabase } from '../lib/supabase'; // --- BRAND NEW: The Supabase Bridge! ---
 
 // --- THE TYPESCRIPT BLUEPRINTS ---
 interface Car {
@@ -17,6 +18,8 @@ interface Car {
   customerName?: string;
   customerPhone?: string;
   note?: string;
+  mileage?: number;             
+  nextServiceMileage?: number;  
 }
 
 interface Customer {
@@ -30,17 +33,7 @@ interface Customer {
   altRelationship: string;
 }
 
-// --- MOCK FLEET DATA ---
-const initialFleet: Car[] = [
-  { id: '1', make: 'Toyota', model: 'Land Cruiser Prado', plate: 'KDC 123A', status: 'available', rate: 12000 },
-  { id: '2', make: 'Mazda', model: 'CX-5', plate: 'KDG 456B', status: 'rented', rate: 8000, returnDate: 'Today, 4:00 PM', customerName: 'Jane Doe', customerPhone: '0700123456' },
-  { id: '3', make: 'Toyota', model: 'Axio', plate: 'KCW 789C', status: 'rented', rate: 3500, returnDate: 'Apr 28, 10:00 AM', customerName: 'Brian K.', customerPhone: '0722000000' },
-  { id: '4', make: 'Nissan', model: 'Demio', plate: 'KDE 321D', status: 'maintenance', rate: 2500, note: 'Oil Change due in 150 km' },
-  { id: '5', make: 'Subaru', model: 'CX-3', plate: 'KDD 654E', status: 'available', rate: 4500 },
-  { id: '6', make: 'Toyota', model: 'Harrier', plate: 'KDF 987F', status: 'available', rate: 6000 },
-];
-
-// --- MOCK RECURRING CUSTOMERS ---
+// --- MOCK RECURRING CUSTOMERS (We will move this to the DB later) ---
 const returningCustomers: Customer[] = [
   { id: 'c1', name: 'Jane Doe', phone: '0700123456', idNumber: '30123456', altName: 'John Doe', altPhone: '0711123456', altId: '28123456', altRelationship: 'Spouse' },
   { id: 'c2', name: 'Brian K.', phone: '0722000000', idNumber: '31555666', altName: 'Sarah K.', altPhone: '0733000000', altId: '29555666', altRelationship: 'Sibling' },
@@ -123,7 +116,46 @@ export default function BujatechAdmin() {
   const [activeTab, setActiveTab] = useState<'fleet' | 'rentals' | 'customers' | 'reports'>('fleet');
   const [searchQuery, setSearchQuery] = useState('');
   
-  const [fleet, setFleet] = useState<Car[]>(initialFleet);
+  // --- UPDATED: Start with empty state and loading flag ---
+  const [fleet, setFleet] = useState<Car[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [viewCarDetails, setViewCarDetails] = useState<Car | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+
+  // --- LIVE CLOUD FETCHING LOGIC ---
+  useEffect(() => {
+    setIsMounted(true);
+    
+    const fetchFleet = async () => {
+      setIsLoading(true);
+      const { data, error } = await supabase
+        .from('cars')
+        .select('*')
+        .order('make', { ascending: true }); // Sorts Toyotas together!
+
+      if (error) {
+        console.error("Error fetching fleet:", error);
+        toast.error("Failed to connect to cloud database");
+      } else if (data) {
+        // Map the snake_case database columns to our camelCase app format
+        const formattedData: Car[] = data.map(car => ({
+          id: car.id,
+          make: car.make,
+          model: car.model,
+          plate: car.plate,
+          status: car.status,
+          rate: Number(car.rate),
+          mileage: Number(car.mileage),
+          nextServiceMileage: Number(car.next_service_mileage),
+          note: car.note,
+        }));
+        setFleet(formattedData);
+      }
+      setIsLoading(false);
+    };
+
+    fetchFleet();
+  }, []);
 
   // --- SMART BOOKING WIZARD STATES ---
   const [isBookingOpen, setIsBookingOpen] = useState(false);
@@ -136,7 +168,8 @@ export default function BujatechAdmin() {
     purpose: 'Personal / Leisure',
     pickupDate: '',
     returnDate: '',
-    // --- UPDATED: 4 DOCUMENT SLOTS ---
+    amountPaid: '',
+    paymentMethod: 'M-Pesa (Direct)', 
     idFront: null as File | null,
     idBack: null as File | null,
     dlFront: null as File | null,
@@ -148,12 +181,13 @@ export default function BujatechAdmin() {
     signature: '' 
   });
 
-  // --- LIVE MATH: 24-HOUR BILLING CYCLE CALCULATOR ---
+  // --- LIVE MATH & BALANCE CALCULATOR ---
   const availableCars = fleet.filter(c => c.status === 'available');
   const selectedCarDetails = availableCars.find(c => c.id === bookingData.carId);
   
   let billedDays = 0;
   let totalCost = 0;
+  let balanceDue = 0;
   
   if (bookingData.pickupDate && bookingData.returnDate && selectedCarDetails) {
     const pickupTime = new Date(bookingData.pickupDate).getTime();
@@ -163,10 +197,10 @@ export default function BujatechAdmin() {
       const diffInHours = (returnTime - pickupTime) / (1000 * 60 * 60);
       billedDays = Math.ceil(diffInHours / 24);
       totalCost = billedDays * selectedCarDetails.rate;
+      balanceDue = totalCost - (Number(bookingData.amountPaid) || 0);
     }
   }
 
-  // --- FILTER LOGIC ---
   const filteredFleet = fleet.filter(car => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
@@ -179,9 +213,6 @@ export default function BujatechAdmin() {
     );
   });
 
-  // --- ACTIONS ---
-  
-  // Auto-fill returning customer data
   const handleReturningCustomer = (customerId: string) => {
     const customer = returningCustomers.find(c => c.id === customerId);
     if (customer) {
@@ -199,15 +230,11 @@ export default function BujatechAdmin() {
     }
   };
 
-  // Generate PDF Contract
   const generateContractPDF = async () => {
     const element = document.getElementById('receipt-pdf-template');
-    if (!element) return;
+    if (!element) throw new Error("Template not found");
     
-    element.style.display = 'block';
     const canvas = await html2canvas(element, { scale: 2 });
-    element.style.display = 'none';
-
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF('p', 'mm', 'a4');
     const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -220,7 +247,6 @@ export default function BujatechAdmin() {
   const handleSubmitBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // --- UPDATED VALIDATION FOR ALL 4 DOCUMENTS ---
     if (!bookingData.idFront || !bookingData.idBack || !bookingData.dlFront || !bookingData.dlBack) {
       toast.error("Missing Documents", { description: "Please upload the Front and Back of BOTH the ID and Driver's License."});
       return;
@@ -238,7 +264,8 @@ export default function BujatechAdmin() {
 
     toast.loading("Generating secure digital contract & PDF...");
 
-    setTimeout(async () => {
+    try {
+      // Temporarily updates local state for UI effect (We will wire Supabase Insert here next)
       setFleet(prevFleet => 
         prevFleet.map(car => 
           car.id === bookingData.carId 
@@ -247,7 +274,6 @@ export default function BujatechAdmin() {
         )
       );
 
-      // Generate the PDF
       await generateContractPDF();
 
       toast.dismiss();
@@ -256,19 +282,24 @@ export default function BujatechAdmin() {
       setIsBookingOpen(false);
       setBookingData({ 
         carId: '', customerName: '', phone: '', idNumber: '', destination: '', purpose: 'Personal / Leisure', 
-        pickupDate: '', returnDate: '', 
+        pickupDate: '', returnDate: '', amountPaid: '', paymentMethod: 'M-Pesa (Direct)',
         idFront: null, idBack: null, dlFront: null, dlBack: null,
         altName: '', altPhone: '', altId: '', altRelationship: '', signature: '' 
       });
-    }, 2000);
+      
+    } catch (error) {
+      toast.dismiss();
+      toast.error("Failed to generate PDF", { description: "Please try again or check browser permissions." });
+      console.error(error);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans pb-20 lg:pb-0 flex">
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans pb-20 lg:pb-0 flex overflow-x-hidden">
       <Toaster position="top-center" richColors />
       
-      {/* --- HIDDEN PDF RECEIPT TEMPLATE --- */}
-      <div id="receipt-pdf-template" className="hidden bg-white p-10 w-[800px] text-slate-900 absolute top-0 left-0 -z-50 border-2 border-slate-900">
+      {/* --- THE OFF-SCREEN PDF RECEIPT TEMPLATE --- */}
+      <div id="receipt-pdf-template" className="absolute top-[-9999px] left-[-9999px] bg-white p-10 w-[800px] text-slate-900 border-2 border-slate-900">
         <div className="flex justify-between items-end border-b-4 border-slate-900 pb-6 mb-6">
           <div>
             <h1 className="text-4xl font-black tracking-tighter uppercase">Bujatech</h1>
@@ -276,7 +307,7 @@ export default function BujatechAdmin() {
           </div>
           <div className="text-right">
             <h2 className="text-2xl font-black text-blue-600 uppercase">Lease Agreement</h2>
-            <p className="font-bold text-slate-500">Date: {new Date().toLocaleDateString()}</p>
+            <p className="font-bold text-slate-500">Date: {isMounted ? new Date().toLocaleDateString() : ''}</p>
           </div>
         </div>
 
@@ -291,7 +322,7 @@ export default function BujatechAdmin() {
             <h3 className="font-black uppercase tracking-widest text-sm text-slate-400 mb-4 border-b pb-2">Vehicle Details</h3>
             <p className="font-bold text-lg">{selectedCarDetails?.make} {selectedCarDetails?.model}</p>
             <p className="font-semibold text-slate-600">Plate: <span className="bg-slate-200 px-2 py-0.5 rounded">{selectedCarDetails?.plate}</span></p>
-            <p className="font-semibold text-slate-600">Daily Rate: KSh {selectedCarDetails?.rate.toLocaleString()}</p>
+            <p className="font-semibold text-slate-600">Daily Rate: KSh {selectedCarDetails?.rate?.toLocaleString()}</p>
           </div>
         </div>
 
@@ -300,7 +331,7 @@ export default function BujatechAdmin() {
             <tr className="bg-slate-900 text-white text-left uppercase text-xs tracking-widest">
               <th className="p-4">Description</th>
               <th className="p-4 text-center">Days</th>
-              <th className="p-4 text-right">Total (KSh)</th>
+              <th className="p-4 text-right">Amount (KSh)</th>
             </tr>
           </thead>
           <tbody>
@@ -316,9 +347,19 @@ export default function BujatechAdmin() {
         </table>
 
         <div className="flex justify-end mb-12">
-          <div className="bg-slate-100 p-6 rounded-xl w-72 text-right border border-slate-300">
-            <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">Total Amount Due</p>
-            <p className="text-3xl font-black text-slate-900">KSh {totalCost.toLocaleString()}</p>
+          <div className="w-80 space-y-3">
+            <div className="flex justify-between text-slate-500 font-bold">
+              <span>Subtotal:</span>
+              <span>KSh {totalCost.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-slate-500 font-bold border-b border-slate-300 pb-3">
+              <span>Amount Paid ({bookingData.paymentMethod}):</span>
+              <span className="text-emerald-600">- KSh {(Number(bookingData.amountPaid) || 0).toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between items-end bg-slate-100 p-4 rounded-xl border border-slate-300">
+              <span className="text-sm font-bold text-slate-500 uppercase tracking-widest">Balance Due</span>
+              <span className="text-2xl font-black text-red-600">KSh {balanceDue.toLocaleString()}</span>
+            </div>
           </div>
         </div>
 
@@ -389,6 +430,7 @@ export default function BujatechAdmin() {
 
           {activeTab === 'fleet' && (
             <div className="space-y-6 animate-in fade-in duration-500">
+              
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none">
                   <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -410,13 +452,19 @@ export default function BujatechAdmin() {
                 )}
               </div>
 
-              {filteredFleet.length === 0 ? (
+              {/* --- CLOUD LOADING SPINNER OR GRID --- */}
+              {isLoading ? (
+                <div className="flex flex-col items-center justify-center py-20 text-center px-4">
+                  <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+                  <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Syncing with Cloud...</p>
+                </div>
+              ) : filteredFleet.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-center px-4">
                   <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center mb-4">
                      <svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                   </div>
                   <h2 className="text-2xl font-black text-slate-800 mb-2">No Matches Found</h2>
-                  <p className="text-slate-500 max-w-md">We couldn't find any cars or customers matching "{searchQuery}".</p>
+                  <p className="text-slate-500 max-w-md">We couldn't find any cars matching "{searchQuery}".</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 lg:gap-6">
@@ -432,7 +480,8 @@ export default function BujatechAdmin() {
                           isAvailable ? 'bg-emerald-500' : isRented ? 'bg-blue-600' : 'bg-red-500'
                         }`}></div>
 
-                        <div className="p-6 pb-4 flex-1">
+                        {/* --- CLICKABLE CARD BODY --- */}
+                        <div className="p-6 pb-4 flex-1 cursor-pointer hover:bg-slate-50 transition" onClick={() => setViewCarDetails(car)}>
                           <div className="flex justify-between items-start mb-4">
                             <div>
                               <h3 className="font-black text-lg text-slate-900 leading-tight">{car.make} {car.model}</h3>
@@ -459,12 +508,12 @@ export default function BujatechAdmin() {
                             {isRented && (
                               <div className="space-y-3">
                                 <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                                  <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">{car.customerName}</span>
+                                  <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">{car.customerName || 'Client'}</span>
                                   <span className="text-sm font-black text-slate-800">{car.customerPhone}</span>
                                 </div>
                                 <div className="flex items-center gap-2 text-blue-700 bg-blue-50 p-2.5 rounded-lg border border-blue-100">
                                   <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                                  <span className="text-sm font-bold truncate">Due: {car.returnDate}</span>
+                                  <span className="text-sm font-bold truncate">Due: {car.returnDate || 'Pending'}</span>
                                 </div>
                               </div>
                             )}
@@ -478,6 +527,7 @@ export default function BujatechAdmin() {
                           </div>
                         </div>
 
+                        {/* Card Action Buttons */}
                         <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
                           {isAvailable ? (
                             <button onClick={() => { setBookingData({...bookingData, carId: car.id}); setIsBookingOpen(true); }} className="flex-1 bg-slate-900 hover:bg-black text-white py-3 rounded-xl font-bold text-sm transition">Book Car</button>
@@ -501,6 +551,88 @@ export default function BujatechAdmin() {
           )}
         </div>
       </main>
+
+      {/* --- NEW: VEHICLE TELEMETRY SIDE PANEL --- */}
+      {viewCarDetails && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={() => setViewCarDetails(null)}></div>
+          
+          <div className="relative w-full max-w-md bg-slate-50 h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+            <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-white z-10">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight">{viewCarDetails.make} {viewCarDetails.model}</h2>
+                <p className="text-xs font-bold text-blue-600 uppercase tracking-widest mt-1">{viewCarDetails.plate}</p>
+              </div>
+              <button onClick={() => setViewCarDetails(null)} className="w-8 h-8 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center hover:bg-slate-200 transition">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-6 flex-1">
+              {/* Status & Rate */}
+              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex justify-between items-center">
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Current Status</p>
+                  <span className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest ${viewCarDetails.status === 'available' ? 'bg-emerald-100 text-emerald-800' : viewCarDetails.status === 'rented' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'}`}>{viewCarDetails.status}</span>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Base Rate</p>
+                  <p className="font-black text-slate-900 text-lg">KSh {viewCarDetails.rate.toLocaleString()}</p>
+                </div>
+              </div>
+
+              {/* Telemetry */}
+              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2 flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  Vehicle Telemetry
+                </h3>
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="font-bold text-slate-600">Current Odometer</span>
+                      <span className="font-black text-slate-900">{viewCarDetails.mileage?.toLocaleString() || 0} km</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="font-bold text-slate-600">Next Service Due</span>
+                      <span className="font-black text-red-500">{viewCarDetails.nextServiceMileage?.toLocaleString() || 0} km</span>
+                    </div>
+                  </div>
+                  
+                  {/* Progress Bar */}
+                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                    <div className={`h-full transition-all duration-1000 ${((viewCarDetails.mileage || 0) / (viewCarDetails.nextServiceMileage || 1)) > 0.9 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(((viewCarDetails.mileage || 0) / (viewCarDetails.nextServiceMileage || 1)) * 100, 100)}%` }}></div>
+                  </div>
+                  
+                  {((viewCarDetails.mileage || 0) / (viewCarDetails.nextServiceMileage || 1)) > 0.9 && (
+                    <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest text-right">⚠️ Service Approaching</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Rented Status Extra Info */}
+              {viewCarDetails.status === 'rented' && (
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Active Lease Details</h3>
+                  <p className="font-bold text-slate-800 text-lg">{viewCarDetails.customerName || 'Client'}</p>
+                  <p className="text-sm font-semibold text-slate-500 mb-4">{viewCarDetails.customerPhone}</p>
+                  <div className="bg-blue-50 text-blue-700 p-4 rounded-xl border border-blue-100 font-black text-sm text-center tracking-wide">
+                     Expected Return:<br/> <span className="text-lg">{viewCarDetails.returnDate || 'Pending'}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className="p-4 bg-white border-t border-slate-200">
+               {viewCarDetails.status === 'available' ? (
+                 <button onClick={() => { setViewCarDetails(null); setBookingData({...bookingData, carId: viewCarDetails.id}); setIsBookingOpen(true); }} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl transition shadow-lg shadow-blue-600/30">Book this Vehicle</button>
+               ) : (
+                 <button onClick={() => setViewCarDetails(null)} className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-black py-4 rounded-xl transition">Close Panel</button>
+               )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- SMART BOOKING MODAL WIZARD --- */}
       {isBookingOpen && (
@@ -535,7 +667,6 @@ export default function BujatechAdmin() {
                   ))}
                 </select>
 
-                {/* Instant Rate Display */}
                 {selectedCarDetails && (
                   <div className="bg-emerald-50 border-2 border-emerald-200 p-4 rounded-xl flex justify-between items-center animate-in zoom-in-95">
                      <span className="text-xs font-black text-emerald-800 uppercase tracking-widest">Confirmed Base Rate</span>
@@ -575,7 +706,6 @@ export default function BujatechAdmin() {
                   </div>
                 </div>
 
-                {/* --- SMART RECEIPT PREVIEW --- */}
                 {selectedCarDetails && bookingData.pickupDate && bookingData.returnDate && billedDays > 0 ? (
                   <div className="mt-4 p-5 bg-slate-900 rounded-xl text-white shadow-inner animate-in zoom-in-95 duration-300">
                     <div className="flex justify-between items-center border-b border-slate-700 pb-3 mb-3">
@@ -598,17 +728,34 @@ export default function BujatechAdmin() {
                 ) : null}
               </div>
 
-              {/* Step 3: Client Identity & Alternative Contact */}
+              {/* Step 3: PAYMENT DETAILS */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                 <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 border-b border-slate-100 pb-2">3. Payment Details</label>
+                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                   <div>
+                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Amount Paid (Full / Partial)</label>
+                     <input type="number" required value={bookingData.amountPaid} onChange={e => setBookingData({...bookingData, amountPaid: e.target.value})} placeholder="e.g. 5000" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
+                   </div>
+                   <div>
+                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Payment Method</label>
+                     <select required value={bookingData.paymentMethod} onChange={e => setBookingData({...bookingData, paymentMethod: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold">
+                       <option value="M-Pesa (Direct)">M-Pesa (Direct)</option>
+                       <option value="Cash">Cash</option>
+                     </select>
+                   </div>
+                 </div>
+              </div>
+
+              {/* Step 4: Client Identity & Alternative Contact */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-5">
                 <div className="flex justify-between items-end border-b border-slate-100 pb-2 mb-1">
-                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest">3. Identity & Contacts</label>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest">4. Identity & Contacts</label>
                   <select onChange={(e) => handleReturningCustomer(e.target.value)} className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 rounded-md px-2 py-1 outline-none cursor-pointer">
                     <option value="">+ Load Recurring Client</option>
                     {returningCustomers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>)}
                   </select>
                 </div>
                 
-                {/* Primary Client */}
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Primary Client Name</label>
                   <input type="text" required value={bookingData.customerName} onChange={e => setBookingData({...bookingData, customerName: e.target.value})} placeholder="John Doe" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
@@ -625,10 +772,8 @@ export default function BujatechAdmin() {
                   </div>
                 </div>
 
-                {/* Alternative Contact / Guarantor */}
                 <div className="pt-4 border-t border-slate-100 space-y-4">
                   <label className="block text-[10px] font-black text-slate-800 uppercase tracking-widest">Alternative Contact / Guarantor (Required)</label>
-                  
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Full Name</label>
@@ -660,9 +805,9 @@ export default function BujatechAdmin() {
                 </div>
               </div>
 
-              {/* Step 4: DIGITAL SIGNATURE */}
+              {/* Step 5: DIGITAL SIGNATURE */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 border-b border-slate-100 pb-2">4. Legal Digital Signature</label>
+                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 border-b border-slate-100 pb-2">5. Legal Digital Signature</label>
                 <p className="text-xs font-medium text-slate-500 mb-4 mt-2">I agree to the terms of the lease and accept liability for the vehicle during the selected period.</p>
                 <SignaturePad onSign={(data) => setBookingData({...bookingData, signature: data})} />
                 {bookingData.signature && (
@@ -673,12 +818,11 @@ export default function BujatechAdmin() {
                 )}
               </div>
 
-              {/* Step 5: Document Uploads (UPDATED: 4 SLOTS) */}
+              {/* Step 6: Document Uploads */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-20">
-                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">5. Secure Documents (Front & Back)</label>
+                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">6. Secure Documents (Front & Back)</label>
                 
                 <div className="grid grid-cols-2 gap-4">
-                  {/* ID Front Upload */}
                   <label className="cursor-pointer">
                     <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
                       if(e.target.files && e.target.files[0]) setBookingData({...bookingData, idFront: e.target.files[0]})
@@ -686,17 +830,15 @@ export default function BujatechAdmin() {
                     {bookingData.idFront ? (
                       <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
                         <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
-                        <span className="text-[9px] font-black uppercase tracking-widest">ID Front Attached</span>
+                        <span className="text-[9px] font-black uppercase tracking-widest">ID Front</span>
                       </div>
                     ) : (
                       <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
-                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                         <span className="text-[9px] font-bold uppercase tracking-widest text-center">ID (Front)</span>
                       </div>
                     )}
                   </label>
 
-                  {/* ID Back Upload */}
                   <label className="cursor-pointer">
                     <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
                       if(e.target.files && e.target.files[0]) setBookingData({...bookingData, idBack: e.target.files[0]})
@@ -704,17 +846,15 @@ export default function BujatechAdmin() {
                     {bookingData.idBack ? (
                       <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
                         <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
-                        <span className="text-[9px] font-black uppercase tracking-widest">ID Back Attached</span>
+                        <span className="text-[9px] font-black uppercase tracking-widest">ID Back</span>
                       </div>
                     ) : (
                       <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
-                         <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                         <span className="text-[9px] font-bold uppercase tracking-widest text-center">ID (Back)</span>
                       </div>
                     )}
                   </label>
 
-                  {/* DL Front Upload */}
                   <label className="cursor-pointer">
                     <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
                        if(e.target.files && e.target.files[0]) setBookingData({...bookingData, dlFront: e.target.files[0]})
@@ -722,17 +862,15 @@ export default function BujatechAdmin() {
                     {bookingData.dlFront ? (
                       <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
                         <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
-                        <span className="text-[9px] font-black uppercase tracking-widest">DL Front Attached</span>
+                        <span className="text-[9px] font-black uppercase tracking-widest">DL Front</span>
                       </div>
                     ) : (
                       <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
-                         <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                         <span className="text-[9px] font-bold uppercase tracking-widest text-center">DL (Front)</span>
                       </div>
                     )}
                   </label>
 
-                  {/* DL Back Upload */}
                   <label className="cursor-pointer">
                     <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
                        if(e.target.files && e.target.files[0]) setBookingData({...bookingData, dlBack: e.target.files[0]})
@@ -740,11 +878,10 @@ export default function BujatechAdmin() {
                     {bookingData.dlBack ? (
                       <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
                         <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
-                        <span className="text-[9px] font-black uppercase tracking-widest">DL Back Attached</span>
+                        <span className="text-[9px] font-black uppercase tracking-widest">DL Back</span>
                       </div>
                     ) : (
                       <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
-                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                         <span className="text-[9px] font-bold uppercase tracking-widest text-center">DL (Back)</span>
                       </div>
                     )}
@@ -758,18 +895,10 @@ export default function BujatechAdmin() {
               <button 
                 onClick={handleSubmitBooking}
                 disabled={
-                  !bookingData.carId || 
-                  !bookingData.customerName || 
-                  !bookingData.altName || 
-                  !bookingData.altId || 
-                  !bookingData.altPhone || 
-                  !bookingData.altRelationship || 
-                  !bookingData.signature || 
-                  !bookingData.idFront ||
-                  !bookingData.idBack ||
-                  !bookingData.dlFront ||
-                  !bookingData.dlBack ||
-                  billedDays <= 0
+                  !bookingData.carId || !bookingData.customerName || !bookingData.altName || 
+                  !bookingData.altId || !bookingData.altPhone || !bookingData.altRelationship || 
+                  !bookingData.signature || !bookingData.idFront || !bookingData.idBack || 
+                  !bookingData.dlFront || !bookingData.dlBack || !bookingData.amountPaid || billedDays <= 0
                 }
                 className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl transition shadow-lg shadow-blue-600/30 disabled:opacity-50 disabled:shadow-none flex justify-center items-center gap-2"
               >
@@ -788,7 +917,7 @@ export default function BujatechAdmin() {
       {/* --- MOBILE BOTTOM NAVIGATION --- */}
       <nav className="lg:hidden fixed bottom-0 w-full bg-white border-t border-slate-200 flex justify-around p-3 pb-safe z-20 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)]">
         <button onClick={() => setActiveTab('fleet')} className={`flex flex-col items-center p-2 transition w-1/4 ${activeTab === 'fleet' ? 'text-blue-600' : 'text-slate-400'}`}>
-          <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+          <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
           <span className="text-[10px] font-black tracking-widest uppercase">Fleet</span>
         </button>
         <button onClick={() => setActiveTab('rentals')} className={`flex flex-col items-center p-2 transition w-1/4 ${activeTab === 'rentals' ? 'text-blue-600' : 'text-slate-400'}`}>
