@@ -18,8 +18,8 @@ interface Car {
   customerName?: string;
   customerPhone?: string;
   note?: string;
-  mileage?: number;             
-  nextServiceMileage?: number;  
+  mileage?: number;             // NEW: Odometer tracking
+  nextServiceMileage?: number;  // NEW: Maintenance tracking
 }
 
 interface Customer {
@@ -44,6 +44,7 @@ const SignaturePad = ({ onSign }: { onSign: (data: string) => void }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getCoordinates = (e: any) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -54,6 +55,7 @@ const SignaturePad = ({ onSign }: { onSign: (data: string) => void }) => {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const startDrawing = (e: any) => {
     e.preventDefault();
     const { x, y } = getCoordinates(e);
@@ -67,6 +69,7 @@ const SignaturePad = ({ onSign }: { onSign: (data: string) => void }) => {
     }
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const draw = (e: any) => {
     e.preventDefault();
     if (!isDrawing) return;
@@ -366,6 +369,7 @@ export default function BujatechAdmin() {
         <div className="grid grid-cols-2 gap-12 pt-8 border-t-2 border-slate-200">
           <div>
             <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Client Signature</p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             {bookingData.signature && <img src={bookingData.signature} alt="Client Signature" className="h-16 mb-2" />}
             <div className="border-t border-slate-400 w-full pt-2">
               <p className="font-bold">{bookingData.customerName}</p>
@@ -464,7 +468,7 @@ export default function BujatechAdmin() {
                      <svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                   </div>
                   <h2 className="text-2xl font-black text-slate-800 mb-2">No Matches Found</h2>
-                  <p className="text-slate-500 max-w-md">We couldn't find any cars matching "{searchQuery}".</p>
+                  <p className="text-slate-500 max-w-md">We couldn&apos;t find any cars matching &quot;{searchQuery}&quot;.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 lg:gap-6">
@@ -917,7 +921,7 @@ export default function BujatechAdmin() {
       {/* --- MOBILE BOTTOM NAVIGATION --- */}
       <nav className="lg:hidden fixed bottom-0 w-full bg-white border-t border-slate-200 flex justify-around p-3 pb-safe z-20 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)]">
         <button onClick={() => setActiveTab('fleet')} className={`flex flex-col items-center p-2 transition w-1/4 ${activeTab === 'fleet' ? 'text-blue-600' : 'text-slate-400'}`}>
-          <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+          <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
           <span className="text-[10px] font-black tracking-widest uppercase">Fleet</span>
         </button>
         <button onClick={() => setActiveTab('rentals')} className={`flex flex-col items-center p-2 transition w-1/4 ${activeTab === 'rentals' ? 'text-blue-600' : 'text-slate-400'}`}>
