@@ -18,8 +18,8 @@ interface Car {
   customerName?: string;
   customerPhone?: string;
   note?: string;
-  mileage?: number;             // NEW: Odometer tracking
-  nextServiceMileage?: number;  // NEW: Maintenance tracking
+  mileage?: number;             
+  nextServiceMileage?: number;  
 }
 
 interface Customer {
@@ -31,6 +31,30 @@ interface Customer {
   altPhone: string; 
   altId: string; 
   altRelationship: string;
+}
+
+// --- NEW BLUEPRINTS FOR LEASES & CLOUD CUSTOMERS ---
+interface LeaseRecord {
+  id: string;
+  pickup_date: string;
+  return_date: string;
+  total_cost: number;
+  balance_due: number;
+  status: string;
+  cars: { make: string; model: string; plate: string };
+  customers: { full_name: string; phone: string };
+}
+
+interface CustomerRecord {
+  id: string; 
+  full_name: string; 
+  phone: string; 
+  id_number: string;
+  alt_name: string; 
+  alt_phone: string; 
+  alt_id: string;
+  alt_relationship: string;
+  is_blacklisted?: boolean;
 }
 
 // --- MOCK RECURRING CUSTOMERS (We will move this to the DB later) ---
@@ -119,45 +143,71 @@ export default function BujatechAdmin() {
   const [activeTab, setActiveTab] = useState<'fleet' | 'rentals' | 'customers' | 'reports'>('fleet');
   const [searchQuery, setSearchQuery] = useState('');
   
-  // --- UPDATED: Start with empty state and loading flag ---
   const [fleet, setFleet] = useState<Car[]>([]);
+  const [activeLeases, setActiveLeases] = useState<LeaseRecord[]>([]);
+  const [customersList, setCustomersList] = useState<CustomerRecord[]>([]);
+  
   const [isLoading, setIsLoading] = useState(true);
   const [viewCarDetails, setViewCarDetails] = useState<Car | null>(null);
   const [isMounted, setIsMounted] = useState(false);
 
-  // --- LIVE CLOUD FETCHING LOGIC ---
+  // --- PHASE 2 STATES: ADD VEHICLE & UPDATE MILEAGE ---
+  const [isAddCarOpen, setIsAddCarOpen] = useState(false);
+  const [newCarData, setNewCarData] = useState({
+    make: 'Toyota', model: '', plate: '', rate: '', mileage: '', nextServiceMileage: ''
+  });
+  const [newMileageInput, setNewMileageInput] = useState('');
+
+  // --- LIVE CLOUD FETCHING: CARS, LEASES, AND CUSTOMERS ---
+  const fetchDashboardData = async () => {
+    setIsLoading(true);
+    try {
+      const [carsRes, leasesRes, customersRes] = await Promise.all([
+        supabase.from('cars').select(`*, leases(return_date, status, customers(full_name, phone))`).order('make', { ascending: true }),
+        supabase.from('leases').select(`*, cars(make, model, plate), customers(full_name, phone)`).eq('status', 'active').order('return_date', { ascending: true }),
+        supabase.from('customers').select('*').order('full_name', { ascending: true })
+      ]);
+
+      if (carsRes.error) throw carsRes.error;
+      if (leasesRes.error) throw leasesRes.error;
+      if (customersRes.error) throw customersRes.error;
+
+      if (carsRes.data) {
+        const formattedCars: Car[] = carsRes.data.map(car => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const activeLease = car.leases?.find((l: any) => l.status === 'active');
+          return {
+            id: car.id,
+            make: car.make,
+            model: car.model,
+            plate: car.plate,
+            status: car.status,
+            rate: Number(car.rate),
+            mileage: Number(car.mileage),
+            nextServiceMileage: Number(car.next_service_mileage),
+            note: car.note,
+            returnDate: activeLease ? new Date(activeLease.return_date).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : undefined,
+            customerName: activeLease?.customers?.full_name,
+            customerPhone: activeLease?.customers?.phone,
+          };
+        });
+        setFleet(formattedCars);
+      }
+      
+      if (leasesRes.data) setActiveLeases(leasesRes.data as unknown as LeaseRecord[]);
+      if (customersRes.data) setCustomersList(customersRes.data as CustomerRecord[]);
+
+    } catch (error) {
+      console.error("Error fetching dashboard data:", error);
+      toast.error("Failed to connect to cloud database");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     setIsMounted(true);
-    
-    const fetchFleet = async () => {
-      setIsLoading(true);
-      const { data, error } = await supabase
-        .from('cars')
-        .select('*')
-        .order('make', { ascending: true }); // Sorts Toyotas together!
-
-      if (error) {
-        console.error("Error fetching fleet:", error);
-        toast.error("Failed to connect to cloud database");
-      } else if (data) {
-        // Map the snake_case database columns to our camelCase app format
-        const formattedData: Car[] = data.map(car => ({
-          id: car.id,
-          make: car.make,
-          model: car.model,
-          plate: car.plate,
-          status: car.status,
-          rate: Number(car.rate),
-          mileage: Number(car.mileage),
-          nextServiceMileage: Number(car.next_service_mileage),
-          note: car.note,
-        }));
-        setFleet(formattedData);
-      }
-      setIsLoading(false);
-    };
-
-    fetchFleet();
+    fetchDashboardData();
   }, []);
 
   // --- SMART BOOKING WIZARD STATES ---
@@ -217,17 +267,17 @@ export default function BujatechAdmin() {
   });
 
   const handleReturningCustomer = (customerId: string) => {
-    const customer = returningCustomers.find(c => c.id === customerId);
+    const customer = customersList.find(c => c.id === customerId);
     if (customer) {
       setBookingData(prev => ({
         ...prev, 
-        customerName: customer.name, 
+        customerName: customer.full_name, 
         phone: customer.phone, 
-        idNumber: customer.idNumber,
-        altName: customer.altName, 
-        altPhone: customer.altPhone, 
-        altId: customer.altId, 
-        altRelationship: customer.altRelationship
+        idNumber: customer.id_number,
+        altName: customer.alt_name || '', 
+        altPhone: customer.alt_phone || '', 
+        altId: customer.alt_id || '', 
+        altRelationship: customer.alt_relationship || ''
       }));
       toast.success("Customer Profile Loaded!");
     }
@@ -247,6 +297,7 @@ export default function BujatechAdmin() {
     pdf.save(`Bujatech_Contract_${bookingData.customerName.replace(/\s+/g, '_')}.pdf`);
   };
 
+  // --- SAVE TO CLOUD ENGINE ---
   const handleSubmitBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -265,22 +316,61 @@ export default function BujatechAdmin() {
       return;
     }
 
-    toast.loading("Generating secure digital contract & PDF...");
+    toast.loading("Saving to Cloud & Generating PDF...");
 
     try {
-      // Temporarily updates local state for UI effect (We will wire Supabase Insert here next)
-      setFleet(prevFleet => 
-        prevFleet.map(car => 
-          car.id === bookingData.carId 
-            ? { ...car, status: 'rented', returnDate: bookingData.returnDate, customerName: bookingData.customerName, customerPhone: bookingData.phone } 
-            : car
-        )
-      );
+      // 1. Save or Update Customer Details
+      const { data: customerData, error: customerError } = await supabase
+        .from('customers')
+        .upsert({ 
+          full_name: bookingData.customerName, 
+          phone: bookingData.phone, 
+          id_number: bookingData.idNumber,
+          alt_name: bookingData.altName,
+          alt_phone: bookingData.altPhone,
+          alt_id: bookingData.altId,
+          alt_relationship: bookingData.altRelationship
+        }, { onConflict: 'id_number' }) 
+        .select()
+        .single();
 
+      if (customerError) throw customerError;
+
+      // 2. Generate the Lease Contract in the Database
+      const { error: leaseError } = await supabase
+        .from('leases')
+        .insert({
+          car_id: bookingData.carId,
+          customer_id: customerData.id,
+          pickup_date: new Date(bookingData.pickupDate).toISOString(),
+          return_date: new Date(bookingData.returnDate).toISOString(),
+          destination: bookingData.destination,
+          purpose: bookingData.purpose,
+          total_cost: totalCost,
+          amount_paid: Number(bookingData.amountPaid) || 0,
+          balance_due: balanceDue,
+          payment_method: bookingData.paymentMethod,
+          status: 'active'
+        });
+
+      if (leaseError) throw leaseError;
+
+      // 3. Lock the Car (Set to Rented)
+      const { error: carError } = await supabase
+        .from('cars')
+        .update({ status: 'rented' })
+        .eq('id', bookingData.carId);
+
+      if (carError) throw carError;
+
+      // 4. Fire the PDF Engine
       await generateContractPDF();
 
+      // 5. Instantly refetch live data to update all UI tabs
+      await fetchDashboardData();
+
       toast.dismiss();
-      toast.success("Contract Active & Downloaded!", { description: `${bookingData.customerName} has leased the vehicle for ${billedDays} days.` });
+      toast.success("Saved to Cloud & Downloaded!", { description: `${bookingData.customerName}'s lease is officially active.` });
       
       setIsBookingOpen(false);
       setBookingData({ 
@@ -292,7 +382,70 @@ export default function BujatechAdmin() {
       
     } catch (error) {
       toast.dismiss();
-      toast.error("Failed to generate PDF", { description: "Please try again or check browser permissions." });
+      toast.error("Cloud Sync Failed", { description: "Check network connection or database structure." });
+      console.error(error);
+    }
+  };
+
+  // --- PHASE 2 ENGINE: ADD NEW VEHICLE TO CLOUD ---
+  const handleAddVehicle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCarData.make || !newCarData.model || !newCarData.plate || !newCarData.rate) {
+      toast.error("Missing Data", { description: "Please fill in all required vehicle details."});
+      return;
+    }
+
+    toast.loading("Adding vehicle to fleet...");
+    try {
+      const { error } = await supabase.from('cars').insert({
+        make: newCarData.make,
+        model: newCarData.model,
+        plate: newCarData.plate.toUpperCase(),
+        status: 'available',
+        rate: Number(newCarData.rate),
+        mileage: Number(newCarData.mileage) || 0,
+        next_service_mileage: Number(newCarData.nextServiceMileage) || 5000
+      });
+
+      if (error) throw error;
+
+      toast.dismiss();
+      toast.success("Vehicle Added Successfully!");
+      setIsAddCarOpen(false);
+      setNewCarData({ make: 'Toyota', model: '', plate: '', rate: '', mileage: '', nextServiceMileage: '' });
+      fetchDashboardData(); 
+    } catch (error) {
+      toast.dismiss();
+      toast.error("Failed to add vehicle", { description: "Please try again."});
+      console.error(error);
+    }
+  };
+
+  // --- PHASE 2 ENGINE: UPDATE ODOMETER ---
+  const handleUpdateMileage = async () => {
+    if (!viewCarDetails || !newMileageInput) return;
+    
+    toast.loading("Updating Odometer...");
+    try {
+      const { error } = await supabase
+        .from('cars')
+        .update({ mileage: Number(newMileageInput) })
+        .eq('id', viewCarDetails.id);
+
+      if (error) throw error;
+
+      toast.dismiss();
+      toast.success("Odometer Updated!");
+      
+      // Instantly update the side panel so the user sees the progress bar move
+      setViewCarDetails({ ...viewCarDetails, mileage: Number(newMileageInput) });
+      setNewMileageInput('');
+      
+      // Sync fleet in background to update the full grid state
+      fetchDashboardData();
+    } catch (error) {
+      toast.dismiss();
+      toast.error("Failed to update odometer");
       console.error(error);
     }
   };
@@ -423,15 +576,32 @@ export default function BujatechAdmin() {
         <div className="p-4 sm:p-8">
           <div className="hidden lg:flex justify-between items-end mb-8">
             <div>
-              <h2 className="text-3xl font-black text-slate-900">Fleet Overview</h2>
-              <p className="text-slate-500 font-medium mt-1">Manage vehicles, track leases, and monitor maintenance.</p>
+              <h2 className="text-3xl font-black text-slate-900">
+                {activeTab === 'fleet' ? 'Fleet Overview' : activeTab === 'rentals' ? 'Active Leases' : 'Client Directory'}
+              </h2>
+              <p className="text-slate-500 font-medium mt-1">
+                {activeTab === 'fleet' ? 'Manage vehicles, track leases, and monitor maintenance.' : 
+                 activeTab === 'rentals' ? 'Monitor cars currently on the road and expected return dates.' : 
+                 'Database of all recurring clients and their contact details.'}
+              </p>
             </div>
-            <button onClick={() => setIsBookingOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-black py-3.5 px-6 rounded-xl shadow-lg shadow-blue-600/30 transition flex items-center gap-2 active:scale-95">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
-              New Booking
-            </button>
+            
+            <div className="flex gap-3">
+              {/* PHASE 2: NEW ADD VEHICLE BUTTON */}
+              {activeTab === 'fleet' && (
+                <button onClick={() => setIsAddCarOpen(true)} className="bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-700 font-bold py-3.5 px-6 rounded-xl transition flex items-center gap-2 active:scale-95 shadow-sm">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                  Add Vehicle
+                </button>
+              )}
+              <button onClick={() => setIsBookingOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-black py-3.5 px-6 rounded-xl shadow-lg shadow-blue-600/30 transition flex items-center gap-2 active:scale-95">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+                New Booking
+              </button>
+            </div>
           </div>
 
+          {/* --- TAB: FLEET OVERVIEW --- */}
           {activeTab === 'fleet' && (
             <div className="space-y-6 animate-in fade-in duration-500">
               
@@ -468,7 +638,7 @@ export default function BujatechAdmin() {
                      <svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                   </div>
                   <h2 className="text-2xl font-black text-slate-800 mb-2">No Matches Found</h2>
-                  <p className="text-slate-500 max-w-md">We couldn&apos;t find any cars matching &quot;{searchQuery}&quot;.</p>
+                  <p className="text-slate-500 max-w-md">We couldn't find any cars matching "{searchQuery}".</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 lg:gap-6">
@@ -513,7 +683,7 @@ export default function BujatechAdmin() {
                               <div className="space-y-3">
                                 <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg border border-slate-100">
                                   <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">{car.customerName || 'Client'}</span>
-                                  <span className="text-sm font-black text-slate-800">{car.customerPhone}</span>
+                                  <span className="text-sm font-black text-slate-800">{car.customerPhone || 'N/A'}</span>
                                 </div>
                                 <div className="flex items-center gap-2 text-blue-700 bg-blue-50 p-2.5 rounded-lg border border-blue-100">
                                   <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -553,10 +723,113 @@ export default function BujatechAdmin() {
               )}
             </div>
           )}
+
+          {/* --- TAB: ACTIVE LEASES --- */}
+          {activeTab === 'rentals' && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+              {isLoading ? (
+                 <div className="flex flex-col items-center justify-center py-20 text-center px-4"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div><p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Syncing Leases...</p></div>
+              ) : activeLeases.length === 0 ? (
+                <div className="bg-white p-10 rounded-2xl border border-slate-200 text-center shadow-sm">
+                  <div className="w-20 h-20 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-4"><svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+                  <h3 className="text-xl font-black text-slate-900 mb-2">No Active Leases</h3>
+                  <p className="text-slate-500 mb-6">All vehicles are currently available in the yard.</p>
+                  <button onClick={() => setIsBookingOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl transition">Create New Lease</button>
+                </div>
+              ) : (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-widest border-b border-slate-200">
+                          <th className="p-5 font-black">Client & Vehicle</th>
+                          <th className="p-5 font-black">Timeline</th>
+                          <th className="p-5 font-black">Financials</th>
+                          <th className="p-5 font-black text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {activeLeases.map((lease) => (
+                          <tr key={lease.id} className="hover:bg-slate-50/50 transition">
+                            <td className="p-5">
+                              <p className="font-bold text-slate-900 text-base">{lease.customers?.full_name}</p>
+                              <p className="text-sm font-semibold text-blue-600 mt-1">{lease.cars?.make} {lease.cars?.model} <span className="text-slate-400">({lease.cars?.plate})</span></p>
+                            </td>
+                            <td className="p-5">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Out: {new Date(lease.pickup_date).toLocaleDateString()}</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                                <p className="text-sm font-black text-slate-800">Due: {new Date(lease.return_date).toLocaleDateString()}</p>
+                              </div>
+                            </td>
+                            <td className="p-5">
+                              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Total: KSh {Number(lease.total_cost).toLocaleString()}</p>
+                              {Number(lease.balance_due) > 0 ? (
+                                <p className="text-sm font-black text-red-600">Balance: KSh {Number(lease.balance_due).toLocaleString()}</p>
+                              ) : (
+                                <span className="inline-block px-2 py-1 bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-widest rounded-md">Fully Paid</span>
+                              )}
+                            </td>
+                            <td className="p-5 text-right">
+                               <button className="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md transition">Manage</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* --- TAB: CUSTOMERS --- */}
+          {activeTab === 'customers' && (
+             <div className="space-y-6 animate-in fade-in duration-500">
+               {isLoading ? (
+                 <div className="flex flex-col items-center justify-center py-20 text-center px-4"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div><p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Syncing Directory...</p></div>
+               ) : customersList.length === 0 ? (
+                <div className="bg-white p-10 rounded-2xl border border-slate-200 text-center shadow-sm">
+                  <h3 className="text-xl font-black text-slate-900 mb-2">No Customers Yet</h3>
+                  <p className="text-slate-500">Your client directory will populate automatically when you create leases.</p>
+                </div>
+               ) : (
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                   {customersList.map(client => (
+                     <div key={client.id} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition">
+                       <div className="flex items-center gap-4 border-b border-slate-100 pb-4 mb-4">
+                         <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-black text-xl">
+                           {client.full_name.charAt(0)}
+                         </div>
+                         <div>
+                           <h3 className="font-black text-lg text-slate-900">{client.full_name}</h3>
+                           <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">ID: {client.id_number}</p>
+                         </div>
+                       </div>
+                       <div className="space-y-3">
+                         <div className="flex items-center gap-3 text-slate-600">
+                           <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+                           <span className="font-bold">{client.phone}</span>
+                         </div>
+                         <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Guarantor</p>
+                           <p className="text-sm font-bold text-slate-800">{client.alt_name} <span className="text-slate-500 font-medium">({client.alt_relationship})</span></p>
+                           <p className="text-xs font-semibold text-blue-600 mt-0.5">{client.alt_phone}</p>
+                         </div>
+                       </div>
+                     </div>
+                   ))}
+                 </div>
+               )}
+             </div>
+          )}
         </div>
       </main>
 
-      {/* --- NEW: VEHICLE TELEMETRY SIDE PANEL --- */}
+      {/* --- NEW: VEHICLE TELEMETRY SIDE PANEL (PHASE 2 UPDATED) --- */}
       {viewCarDetails && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={() => setViewCarDetails(null)}></div>
@@ -585,7 +858,7 @@ export default function BujatechAdmin() {
                 </div>
               </div>
 
-              {/* Telemetry */}
+              {/* Telemetry with Manual Update */}
               <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2 flex items-center gap-2">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -611,6 +884,25 @@ export default function BujatechAdmin() {
                   {((viewCarDetails.mileage || 0) / (viewCarDetails.nextServiceMileage || 1)) > 0.9 && (
                     <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest text-right">⚠️ Service Approaching</p>
                   )}
+
+                  {/* Phase 2: Manual Update Odometer */}
+                  <div className="mt-4 pt-4 border-t border-slate-100 flex gap-2">
+                    <input 
+                      type="number" 
+                      placeholder="New Mileage..." 
+                      value={newMileageInput}
+                      onChange={(e) => setNewMileageInput(e.target.value)}
+                      className="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 text-sm font-bold"
+                    />
+                    <button 
+                      onClick={handleUpdateMileage}
+                      disabled={!newMileageInput}
+                      className="bg-slate-900 text-white px-4 rounded-lg text-xs font-bold uppercase tracking-widest hover:bg-black transition disabled:opacity-50"
+                    >
+                      Update
+                    </button>
+                  </div>
+
                 </div>
               </div>
 
@@ -619,7 +911,7 @@ export default function BujatechAdmin() {
                 <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Active Lease Details</h3>
                   <p className="font-bold text-slate-800 text-lg">{viewCarDetails.customerName || 'Client'}</p>
-                  <p className="text-sm font-semibold text-slate-500 mb-4">{viewCarDetails.customerPhone}</p>
+                  <p className="text-sm font-semibold text-slate-500 mb-4">{viewCarDetails.customerPhone || 'N/A'}</p>
                   <div className="bg-blue-50 text-blue-700 p-4 rounded-xl border border-blue-100 font-black text-sm text-center tracking-wide">
                      Expected Return:<br/> <span className="text-lg">{viewCarDetails.returnDate || 'Pending'}</span>
                   </div>
@@ -633,6 +925,79 @@ export default function BujatechAdmin() {
                ) : (
                  <button onClick={() => setViewCarDetails(null)} className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-black py-4 rounded-xl transition">Close Panel</button>
                )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- PHASE 2: ADD VEHICLE MODAL WIZARD --- */}
+      {isAddCarOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={() => setIsAddCarOpen(false)}></div>
+          
+          <div className="relative w-full max-w-lg bg-slate-50 h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+            <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-white z-10 shadow-sm">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight">Add New Vehicle</h2>
+                <p className="text-xs font-bold text-blue-600 uppercase tracking-widest mt-1">Fleet Expansion</p>
+              </div>
+              <button onClick={() => setIsAddCarOpen(false)} className="w-8 h-8 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center hover:bg-slate-200 transition">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+
+            <form onSubmit={handleAddVehicle} className="flex-1 overflow-y-auto p-6 space-y-6">
+              
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 border-b border-slate-100 pb-2">Vehicle Details</label>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Make</label>
+                    <input type="text" required value={newCarData.make} onChange={e => setNewCarData({...newCarData, make: e.target.value})} placeholder="e.g. Toyota" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Model</label>
+                    <input type="text" required value={newCarData.model} onChange={e => setNewCarData({...newCarData, model: e.target.value})} placeholder="e.g. Fielder" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">License Plate</label>
+                  <input type="text" required value={newCarData.plate} onChange={e => setNewCarData({...newCarData, plate: e.target.value})} placeholder="e.g. KDH 123A" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold uppercase" />
+                </div>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 border-b border-slate-100 pb-2">Financials & Telemetry</label>
+                
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Daily Rental Rate (KSh)</label>
+                  <input type="number" required value={newCarData.rate} onChange={e => setNewCarData({...newCarData, rate: e.target.value})} placeholder="e.g. 3500" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Current Mileage</label>
+                    <input type="number" required value={newCarData.mileage} onChange={e => setNewCarData({...newCarData, mileage: e.target.value})} placeholder="e.g. 85000" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 ml-1">Next Service At</label>
+                    <input type="number" required value={newCarData.nextServiceMileage} onChange={e => setNewCarData({...newCarData, nextServiceMileage: e.target.value})} placeholder="e.g. 90000" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-bold" />
+                  </div>
+                </div>
+              </div>
+            </form>
+
+            <div className="p-4 sm:p-6 border-t border-slate-200 bg-white z-10 flex gap-3 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+              <button onClick={() => setIsAddCarOpen(false)} className="px-6 py-4 bg-slate-100 text-slate-600 font-bold rounded-xl transition hover:bg-slate-200">Cancel</button>
+              <button 
+                onClick={handleAddVehicle}
+                disabled={!newCarData.make || !newCarData.model || !newCarData.plate || !newCarData.rate}
+                className="flex-1 bg-slate-900 hover:bg-black text-white font-black py-4 rounded-xl transition shadow-lg disabled:opacity-50 disabled:shadow-none flex justify-center items-center gap-2"
+              >
+                Save Vehicle to Fleet
+              </button>
             </div>
           </div>
         </div>
@@ -755,8 +1120,8 @@ export default function BujatechAdmin() {
                 <div className="flex justify-between items-end border-b border-slate-100 pb-2 mb-1">
                   <label className="block text-xs font-black text-slate-400 uppercase tracking-widest">4. Identity & Contacts</label>
                   <select onChange={(e) => handleReturningCustomer(e.target.value)} className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 rounded-md px-2 py-1 outline-none cursor-pointer">
-                    <option value="">+ Load Recurring Client</option>
-                    {returningCustomers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>)}
+                    <option value="">+ Load Cloud Client</option>
+                    {customersList.map(c => <option key={c.id} value={c.id}>{c.full_name} ({c.phone})</option>)}
                   </select>
                 </div>
                 
