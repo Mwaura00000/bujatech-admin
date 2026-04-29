@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Toaster, toast } from 'sonner';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
-import { supabase } from '../lib/supabase'; // --- BRAND NEW: The Supabase Bridge! ---
+import { supabase } from '../lib/supabase'; 
 
 // --- THE TYPESCRIPT BLUEPRINTS ---
 interface Car {
@@ -33,7 +33,7 @@ interface Customer {
   altRelationship: string;
 }
 
-// --- NEW BLUEPRINTS FOR LEASES & CLOUD CUSTOMERS ---
+// --- NEW BLUEPRINTS FOR LEASES, CLOUD CUSTOMERS & MAINTENANCE ---
 interface LeaseRecord {
   id: string;
   pickup_date: string;
@@ -55,6 +55,14 @@ interface CustomerRecord {
   alt_id: string;
   alt_relationship: string;
   is_blacklisted?: boolean;
+}
+
+interface MaintenanceLogRecord {
+  id: string;
+  service_date: string;
+  description: string;
+  cost: number;
+  mileage_at_service: number;
 }
 
 // --- MOCK RECURRING CUSTOMERS (We will move this to the DB later) ---
@@ -148,7 +156,6 @@ export default function BujatechAdmin() {
   const [customersList, setCustomersList] = useState<CustomerRecord[]>([]);
   
   const [isLoading, setIsLoading] = useState(true);
-  const [viewCarDetails, setViewCarDetails] = useState<Car | null>(null);
   const [isMounted, setIsMounted] = useState(false);
 
   // --- PHASE 2 STATES: ADD VEHICLE & UPDATE MILEAGE ---
@@ -157,6 +164,15 @@ export default function BujatechAdmin() {
     make: 'Toyota', model: '', plate: '', rate: '', mileage: '', nextServiceMileage: ''
   });
   const [newMileageInput, setNewMileageInput] = useState('');
+
+  // --- PHASE 3 STATES: DEEP DIVE SIDE PANEL ---
+  const [viewCarDetails, setViewCarDetails] = useState<Car | null>(null);
+  const [sidePanelTab, setSidePanelTab] = useState<'telemetry' | 'history' | 'maintenance'>('telemetry');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [carLeaseHistory, setCarLeaseHistory] = useState<any[]>([]);
+  const [maintenanceLogs, setMaintenanceLogs] = useState<MaintenanceLogRecord[]>([]);
+  const [isPanelLoading, setIsPanelLoading] = useState(false);
+  const [newMaintenance, setNewMaintenance] = useState({ description: '', cost: '', mileage: '' });
 
   // --- LIVE CLOUD FETCHING: CARS, LEASES, AND CUSTOMERS ---
   const fetchDashboardData = async () => {
@@ -209,6 +225,59 @@ export default function BujatechAdmin() {
     setIsMounted(true);
     fetchDashboardData();
   }, []);
+
+  // --- PHASE 3 ENGINE: OPEN CAR PROFILE & FETCH DEEP DATA ---
+  const handleOpenCarDetails = async (car: Car) => {
+    setViewCarDetails(car);
+    setSidePanelTab('telemetry');
+    setIsPanelLoading(true);
+
+    try {
+      const [leaseRes, maintRes] = await Promise.all([
+        supabase.from('leases').select('*, customers(full_name)').eq('car_id', car.id).order('pickup_date', { ascending: false }),
+        supabase.from('maintenance_logs').select('*').eq('car_id', car.id).order('service_date', { ascending: false })
+      ]);
+
+      if (leaseRes.data) setCarLeaseHistory(leaseRes.data);
+      if (maintRes.data) setMaintenanceLogs(maintRes.data);
+    } catch (error) {
+      console.error("Error fetching car deep dive:", error);
+      toast.error("Failed to load vehicle history");
+    } finally {
+      setIsPanelLoading(false);
+    }
+  };
+
+  // --- PHASE 3 ENGINE: SAVE MAINTENANCE LOG ---
+  const handleAddMaintenance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!viewCarDetails || !newMaintenance.description) return;
+    
+    toast.loading("Logging maintenance...");
+    try {
+      const { error } = await supabase.from('maintenance_logs').insert({
+        car_id: viewCarDetails.id,
+        description: newMaintenance.description,
+        cost: Number(newMaintenance.cost) || 0,
+        mileage_at_service: Number(newMaintenance.mileage) || viewCarDetails.mileage
+      });
+
+      if (error) throw error;
+      
+      toast.dismiss();
+      toast.success("Maintenance logged successfully!");
+      
+      setNewMaintenance({ description: '', cost: '', mileage: '' });
+      
+      const maintRes = await supabase.from('maintenance_logs').select('*').eq('car_id', viewCarDetails.id).order('service_date', { ascending: false });
+      if (maintRes.data) setMaintenanceLogs(maintRes.data);
+      
+    } catch (error) {
+      toast.dismiss();
+      toast.error("Failed to save maintenance record");
+      console.error(error);
+    }
+  };
 
   // --- SMART BOOKING WIZARD STATES ---
   const [isBookingOpen, setIsBookingOpen] = useState(false);
@@ -319,7 +388,6 @@ export default function BujatechAdmin() {
     toast.loading("Saving to Cloud & Generating PDF...");
 
     try {
-      // 1. Save or Update Customer Details
       const { data: customerData, error: customerError } = await supabase
         .from('customers')
         .upsert({ 
@@ -336,7 +404,6 @@ export default function BujatechAdmin() {
 
       if (customerError) throw customerError;
 
-      // 2. Generate the Lease Contract in the Database
       const { error: leaseError } = await supabase
         .from('leases')
         .insert({
@@ -355,7 +422,6 @@ export default function BujatechAdmin() {
 
       if (leaseError) throw leaseError;
 
-      // 3. Lock the Car (Set to Rented)
       const { error: carError } = await supabase
         .from('cars')
         .update({ status: 'rented' })
@@ -363,10 +429,7 @@ export default function BujatechAdmin() {
 
       if (carError) throw carError;
 
-      // 4. Fire the PDF Engine
       await generateContractPDF();
-
-      // 5. Instantly refetch live data to update all UI tabs
       await fetchDashboardData();
 
       toast.dismiss();
@@ -437,11 +500,8 @@ export default function BujatechAdmin() {
       toast.dismiss();
       toast.success("Odometer Updated!");
       
-      // Instantly update the side panel so the user sees the progress bar move
       setViewCarDetails({ ...viewCarDetails, mileage: Number(newMileageInput) });
       setNewMileageInput('');
-      
-      // Sync fleet in background to update the full grid state
       fetchDashboardData();
     } catch (error) {
       toast.dismiss();
@@ -655,7 +715,7 @@ export default function BujatechAdmin() {
                         }`}></div>
 
                         {/* --- CLICKABLE CARD BODY --- */}
-                        <div className="p-6 pb-4 flex-1 cursor-pointer hover:bg-slate-50 transition" onClick={() => setViewCarDetails(car)}>
+                        <div className="p-6 pb-4 flex-1 cursor-pointer hover:bg-slate-50 transition" onClick={() => handleOpenCarDetails(car)}>
                           <div className="flex justify-between items-start mb-4">
                             <div>
                               <h3 className="font-black text-lg text-slate-900 leading-tight">{car.make} {car.model}</h3>
@@ -739,23 +799,23 @@ export default function BujatechAdmin() {
               ) : (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
+                    <table className="w-full text-left border-collapse min-w-[800px]">
                       <thead>
                         <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-widest border-b border-slate-200">
-                          <th className="p-5 font-black">Client & Vehicle</th>
-                          <th className="p-5 font-black">Timeline</th>
-                          <th className="p-5 font-black">Financials</th>
-                          <th className="p-5 font-black text-right">Actions</th>
+                          <th className="p-5 font-black whitespace-nowrap">Client & Vehicle</th>
+                          <th className="p-5 font-black whitespace-nowrap">Timeline</th>
+                          <th className="p-5 font-black whitespace-nowrap">Financials</th>
+                          <th className="p-5 font-black text-right whitespace-nowrap">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {activeLeases.map((lease) => (
                           <tr key={lease.id} className="hover:bg-slate-50/50 transition">
-                            <td className="p-5">
+                            <td className="p-5 whitespace-nowrap">
                               <p className="font-bold text-slate-900 text-base">{lease.customers?.full_name}</p>
                               <p className="text-sm font-semibold text-blue-600 mt-1">{lease.cars?.make} {lease.cars?.model} <span className="text-slate-400">({lease.cars?.plate})</span></p>
                             </td>
-                            <td className="p-5">
+                            <td className="p-5 whitespace-nowrap">
                               <div className="flex items-center gap-2 mb-1">
                                 <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Out: {new Date(lease.pickup_date).toLocaleDateString()}</p>
@@ -765,7 +825,7 @@ export default function BujatechAdmin() {
                                 <p className="text-sm font-black text-slate-800">Due: {new Date(lease.return_date).toLocaleDateString()}</p>
                               </div>
                             </td>
-                            <td className="p-5">
+                            <td className="p-5 whitespace-nowrap">
                               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Total: KSh {Number(lease.total_cost).toLocaleString()}</p>
                               {Number(lease.balance_due) > 0 ? (
                                 <p className="text-sm font-black text-red-600">Balance: KSh {Number(lease.balance_due).toLocaleString()}</p>
@@ -773,7 +833,7 @@ export default function BujatechAdmin() {
                                 <span className="inline-block px-2 py-1 bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-widest rounded-md">Fully Paid</span>
                               )}
                             </td>
-                            <td className="p-5 text-right">
+                            <td className="p-5 text-right whitespace-nowrap">
                                <button className="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md transition">Manage</button>
                             </td>
                           </tr>
@@ -829,12 +889,13 @@ export default function BujatechAdmin() {
         </div>
       </main>
 
-      {/* --- NEW: VEHICLE TELEMETRY SIDE PANEL (PHASE 2 UPDATED) --- */}
+      {/* --- PHASE 3: DEEP DIVE VEHICLE PROFILE SIDE PANEL --- */}
       {viewCarDetails && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={() => setViewCarDetails(null)}></div>
           
           <div className="relative w-full max-w-md bg-slate-50 h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+            {/* Header */}
             <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-white z-10">
               <div>
                 <h2 className="text-xl font-black text-slate-900 tracking-tight">{viewCarDetails.make} {viewCarDetails.model}</h2>
@@ -845,77 +906,134 @@ export default function BujatechAdmin() {
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-6 flex-1">
-              {/* Status & Rate */}
-              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex justify-between items-center">
-                <div>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Current Status</p>
-                  <span className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest ${viewCarDetails.status === 'available' ? 'bg-emerald-100 text-emerald-800' : viewCarDetails.status === 'rented' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'}`}>{viewCarDetails.status}</span>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Base Rate</p>
-                  <p className="font-black text-slate-900 text-lg">KSh {viewCarDetails.rate.toLocaleString()}</p>
-                </div>
-              </div>
+            {/* Profile Tabs Navigation */}
+            <div className="flex bg-white border-b border-slate-200">
+              <button onClick={() => setSidePanelTab('telemetry')} className={`flex-1 py-4 text-xs font-black uppercase tracking-widest transition border-b-2 ${sidePanelTab === 'telemetry' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Status</button>
+              <button onClick={() => setSidePanelTab('history')} className={`flex-1 py-4 text-xs font-black uppercase tracking-widest transition border-b-2 ${sidePanelTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Leases</button>
+              <button onClick={() => setSidePanelTab('maintenance')} className={`flex-1 py-4 text-xs font-black uppercase tracking-widest transition border-b-2 ${sidePanelTab === 'maintenance' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Maint.</button>
+            </div>
 
-              {/* Telemetry with Manual Update */}
-              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2 flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                  Vehicle Telemetry
-                </h3>
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="font-bold text-slate-600">Current Odometer</span>
-                      <span className="font-black text-slate-900">{viewCarDetails.mileage?.toLocaleString() || 0} km</span>
+            <div className="p-6 overflow-y-auto space-y-6 flex-1">
+              {isPanelLoading ? (
+                <div className="flex justify-center py-10"><div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
+              ) : (
+                <>
+                  {/* TAB 1: TELEMETRY (Standard Status) */}
+                  {sidePanelTab === 'telemetry' && (
+                    <div className="space-y-6 animate-in fade-in">
+                      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex justify-between items-center">
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Current Status</p>
+                          <span className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest ${viewCarDetails.status === 'available' ? 'bg-emerald-100 text-emerald-800' : viewCarDetails.status === 'rented' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'}`}>{viewCarDetails.status}</span>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Base Rate</p>
+                          <p className="font-black text-slate-900 text-lg">KSh {viewCarDetails.rate.toLocaleString()}</p>
+                        </div>
+                      </div>
+
+                      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2 flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                          Vehicle Telemetry
+                        </h3>
+                        <div className="space-y-4">
+                          <div>
+                            <div className="flex justify-between text-sm mb-1">
+                              <span className="font-bold text-slate-600">Current Odometer</span>
+                              <span className="font-black text-slate-900">{viewCarDetails.mileage?.toLocaleString() || 0} km</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="font-bold text-slate-600">Next Service Due</span>
+                              <span className="font-black text-red-500">{viewCarDetails.nextServiceMileage?.toLocaleString() || 0} km</span>
+                            </div>
+                          </div>
+                          <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                            <div className={`h-full transition-all duration-1000 ${((viewCarDetails.mileage || 0) / (viewCarDetails.nextServiceMileage || 1)) > 0.9 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(((viewCarDetails.mileage || 0) / (viewCarDetails.nextServiceMileage || 1)) * 100, 100)}%` }}></div>
+                          </div>
+                          {((viewCarDetails.mileage || 0) / (viewCarDetails.nextServiceMileage || 1)) > 0.9 && (
+                            <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest text-right">⚠️ Service Approaching</p>
+                          )}
+
+                          {/* Phase 2: Manual Update Odometer */}
+                          <div className="mt-4 pt-4 border-t border-slate-100 flex gap-2">
+                            <input type="number" placeholder="New Mileage..." value={newMileageInput} onChange={(e) => setNewMileageInput(e.target.value)} className="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 text-sm font-bold" />
+                            <button onClick={handleUpdateMileage} disabled={!newMileageInput} className="bg-slate-900 text-white px-4 rounded-lg text-xs font-bold uppercase tracking-widest hover:bg-black transition disabled:opacity-50">Update</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {viewCarDetails.status === 'rented' && (
+                        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                          <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Active Lease Details</h3>
+                          <p className="font-bold text-slate-800 text-lg">{viewCarDetails.customerName || 'Client'}</p>
+                          <p className="text-sm font-semibold text-slate-500 mb-4">{viewCarDetails.customerPhone || 'N/A'}</p>
+                          <div className="bg-blue-50 text-blue-700 p-4 rounded-xl border border-blue-100 font-black text-sm text-center tracking-wide">
+                             Expected Return:<br/> <span className="text-lg">{viewCarDetails.returnDate || 'Pending'}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="font-bold text-slate-600">Next Service Due</span>
-                      <span className="font-black text-red-500">{viewCarDetails.nextServiceMileage?.toLocaleString() || 0} km</span>
-                    </div>
-                  </div>
-                  
-                  {/* Progress Bar */}
-                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                    <div className={`h-full transition-all duration-1000 ${((viewCarDetails.mileage || 0) / (viewCarDetails.nextServiceMileage || 1)) > 0.9 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(((viewCarDetails.mileage || 0) / (viewCarDetails.nextServiceMileage || 1)) * 100, 100)}%` }}></div>
-                  </div>
-                  
-                  {((viewCarDetails.mileage || 0) / (viewCarDetails.nextServiceMileage || 1)) > 0.9 && (
-                    <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest text-right">⚠️ Service Approaching</p>
                   )}
 
-                  {/* Phase 2: Manual Update Odometer */}
-                  <div className="mt-4 pt-4 border-t border-slate-100 flex gap-2">
-                    <input 
-                      type="number" 
-                      placeholder="New Mileage..." 
-                      value={newMileageInput}
-                      onChange={(e) => setNewMileageInput(e.target.value)}
-                      className="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 text-sm font-bold"
-                    />
-                    <button 
-                      onClick={handleUpdateMileage}
-                      disabled={!newMileageInput}
-                      className="bg-slate-900 text-white px-4 rounded-lg text-xs font-bold uppercase tracking-widest hover:bg-black transition disabled:opacity-50"
-                    >
-                      Update
-                    </button>
-                  </div>
+                  {/* TAB 2: LEASE HISTORY */}
+                  {sidePanelTab === 'history' && (
+                    <div className="space-y-4 animate-in fade-in">
+                      {carLeaseHistory.length === 0 ? (
+                        <div className="text-center py-10 text-slate-400 font-bold text-sm">No lease history found for this vehicle.</div>
+                      ) : (
+                        carLeaseHistory.map((lease) => (
+                          <div key={lease.id} className={`p-4 rounded-xl border ${lease.status === 'active' ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-200 shadow-sm'}`}>
+                            <div className="flex justify-between items-start mb-2">
+                              <span className="font-black text-slate-900">{lease.customers?.full_name}</span>
+                              <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${lease.status === 'active' ? 'bg-blue-200 text-blue-800' : 'bg-slate-100 text-slate-500'}`}>{lease.status}</span>
+                            </div>
+                            <p className="text-xs font-bold text-slate-500 mb-3">{new Date(lease.pickup_date).toLocaleDateString()} &rarr; {new Date(lease.return_date).toLocaleDateString()}</p>
+                            <div className="flex justify-between items-center border-t border-slate-100 pt-2 mt-2">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Cost</span>
+                              <span className="font-black text-slate-800">KSh {Number(lease.total_cost).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
 
-                </div>
-              </div>
+                  {/* TAB 3: MAINTENANCE LOGS */}
+                  {sidePanelTab === 'maintenance' && (
+                    <div className="space-y-6 animate-in fade-in">
+                      {/* Add Maintenance Form */}
+                      <form onSubmit={handleAddMaintenance} className="bg-slate-900 p-5 rounded-2xl shadow-lg">
+                        <h3 className="text-xs font-black text-slate-300 uppercase tracking-widest mb-4">Log New Service</h3>
+                        <div className="space-y-3">
+                          <input type="text" required value={newMaintenance.description} onChange={e => setNewMaintenance({...newMaintenance, description: e.target.value})} placeholder="e.g. Oil Change, New Tires" className="w-full p-3 bg-slate-800 border border-slate-700 rounded-lg outline-none focus:border-blue-500 text-white font-bold text-sm placeholder:text-slate-500" />
+                          <div className="flex gap-3">
+                            <input type="number" required value={newMaintenance.cost} onChange={e => setNewMaintenance({...newMaintenance, cost: e.target.value})} placeholder="Cost (KSh)" className="w-1/2 p-3 bg-slate-800 border border-slate-700 rounded-lg outline-none focus:border-blue-500 text-white font-bold text-sm placeholder:text-slate-500" />
+                            <input type="number" value={newMaintenance.mileage} onChange={e => setNewMaintenance({...newMaintenance, mileage: e.target.value})} placeholder="Mileage (Optional)" className="w-1/2 p-3 bg-slate-800 border border-slate-700 rounded-lg outline-none focus:border-blue-500 text-white font-bold text-sm placeholder:text-slate-500" />
+                          </div>
+                          <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-3 rounded-lg transition shadow-lg mt-2">Save Record</button>
+                        </div>
+                      </form>
 
-              {/* Rented Status Extra Info */}
-              {viewCarDetails.status === 'rented' && (
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
-                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Active Lease Details</h3>
-                  <p className="font-bold text-slate-800 text-lg">{viewCarDetails.customerName || 'Client'}</p>
-                  <p className="text-sm font-semibold text-slate-500 mb-4">{viewCarDetails.customerPhone || 'N/A'}</p>
-                  <div className="bg-blue-50 text-blue-700 p-4 rounded-xl border border-blue-100 font-black text-sm text-center tracking-wide">
-                     Expected Return:<br/> <span className="text-lg">{viewCarDetails.returnDate || 'Pending'}</span>
-                  </div>
-                </div>
+                      {/* Maintenance History List */}
+                      <div className="space-y-3">
+                        {maintenanceLogs.length === 0 ? (
+                          <div className="text-center py-6 text-slate-400 font-bold text-sm">No maintenance logged yet.</div>
+                        ) : (
+                          maintenanceLogs.map((log) => (
+                            <div key={log.id} className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                              <div>
+                                <h4 className="font-black text-slate-800 text-sm">{log.description}</h4>
+                                <p className="text-xs font-bold text-slate-400 mt-1">{new Date(log.service_date).toLocaleDateString()} • {Number(log.mileage_at_service).toLocaleString()} km</p>
+                              </div>
+                              <span className="font-black text-red-500 text-sm">KSh {Number(log.cost).toLocaleString()}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
             
