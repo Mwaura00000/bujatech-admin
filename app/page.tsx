@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Toaster, toast } from 'sonner';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
-import { supabase } from '../lib/supabase'; 
+import { supabase } from '../lib/supabase';
 
 // --- THE TYPESCRIPT BLUEPRINTS ---
 interface Car {
@@ -784,7 +784,7 @@ export default function BujatechAdmin() {
             </div>
           )}
 
-          {/* --- TAB: ACTIVE LEASES --- */}
+          {/* --- TAB: ACTIVE LEASES (RESPONSIVE FIX APPLIED) --- */}
           {activeTab === 'rentals' && (
             <div className="space-y-6 animate-in fade-in duration-500">
               {isLoading ? (
@@ -797,51 +797,90 @@ export default function BujatechAdmin() {
                   <button onClick={() => setIsBookingOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl transition">Create New Lease</button>
                 </div>
               ) : (
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[800px]">
-                      <thead>
-                        <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-widest border-b border-slate-200">
-                          <th className="p-5 font-black whitespace-nowrap">Client & Vehicle</th>
-                          <th className="p-5 font-black whitespace-nowrap">Timeline</th>
-                          <th className="p-5 font-black whitespace-nowrap">Financials</th>
-                          <th className="p-5 font-black text-right whitespace-nowrap">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {activeLeases.map((lease) => (
-                          <tr key={lease.id} className="hover:bg-slate-50/50 transition">
-                            <td className="p-5 whitespace-nowrap">
-                              <p className="font-bold text-slate-900 text-base">{lease.customers?.full_name}</p>
-                              <p className="text-sm font-semibold text-blue-600 mt-1">{lease.cars?.make} {lease.cars?.model} <span className="text-slate-400">({lease.cars?.plate})</span></p>
-                            </td>
-                            <td className="p-5 whitespace-nowrap">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Out: {new Date(lease.pickup_date).toLocaleDateString()}</p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                                <p className="text-sm font-black text-slate-800">Due: {new Date(lease.return_date).toLocaleDateString()}</p>
-                              </div>
-                            </td>
-                            <td className="p-5 whitespace-nowrap">
-                              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Total: KSh {Number(lease.total_cost).toLocaleString()}</p>
-                              {Number(lease.balance_due) > 0 ? (
-                                <p className="text-sm font-black text-red-600">Balance: KSh {Number(lease.balance_due).toLocaleString()}</p>
-                              ) : (
-                                <span className="inline-block px-2 py-1 bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-widest rounded-md">Fully Paid</span>
-                              )}
-                            </td>
-                            <td className="p-5 text-right whitespace-nowrap">
-                               <button className="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md transition">Manage</button>
-                            </td>
+                <>
+                  {/* DESKTOP VIEW: FULL WIDE TABLE */}
+                  <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse min-w-[800px]">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-widest border-b border-slate-200">
+                            <th className="p-5 font-black whitespace-nowrap">Client & Vehicle</th>
+                            <th className="p-5 font-black whitespace-nowrap">Timeline</th>
+                            <th className="p-5 font-black whitespace-nowrap">Financials</th>
+                            <th className="p-5 font-black text-right whitespace-nowrap">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {activeLeases.map((lease) => (
+                            <tr key={lease.id} className="hover:bg-slate-50/50 transition">
+                              <td className="p-5 whitespace-nowrap">
+                                <p className="font-bold text-slate-900 text-base">{lease.customers?.full_name}</p>
+                                <p className="text-sm font-semibold text-blue-600 mt-1">{lease.cars?.make} {lease.cars?.model} <span className="text-slate-400">({lease.cars?.plate})</span></p>
+                              </td>
+                              <td className="p-5 whitespace-nowrap">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Out: {new Date(lease.pickup_date).toLocaleDateString()}</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                                  <p className="text-sm font-black text-slate-800">Due: {new Date(lease.return_date).toLocaleDateString()}</p>
+                                </div>
+                              </td>
+                              <td className="p-5 whitespace-nowrap">
+                                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Total: KSh {Number(lease.total_cost).toLocaleString()}</p>
+                                {Number(lease.balance_due) > 0 ? (
+                                  <p className="text-sm font-black text-red-600">Balance: KSh {Number(lease.balance_due).toLocaleString()}</p>
+                                ) : (
+                                  <span className="inline-block px-2 py-1 bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-widest rounded-md">Fully Paid</span>
+                                )}
+                              </td>
+                              <td className="p-5 text-right whitespace-nowrap">
+                                 <button className="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md transition">Manage</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
+
+                  {/* MOBILE VIEW: VERTICAL STACKED CARDS */}
+                  <div className="md:hidden divide-y divide-slate-100 bg-white rounded-2xl shadow-sm border border-slate-200">
+                    {activeLeases.map((lease) => (
+                      <div key={lease.id} className="p-5 space-y-4">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-bold text-slate-900 text-lg leading-tight">{lease.customers?.full_name}</p>
+                            <p className="text-sm font-semibold text-blue-600 mt-0.5">{lease.cars?.make} {lease.cars?.model} <span className="text-slate-400">({lease.cars?.plate})</span></p>
+                          </div>
+                          <button className="bg-slate-900 hover:bg-black text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-md transition">Manage</button>
+                        </div>
+                        
+                        <div className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-100">
+                          <div>
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Out: {new Date(lease.pickup_date).toLocaleDateString()}</p>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                              <p className="text-xs font-black text-slate-800">Due: {new Date(lease.return_date).toLocaleDateString()}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Total: KSh {Number(lease.total_cost).toLocaleString()}</p>
+                            {Number(lease.balance_due) > 0 ? (
+                              <p className="text-xs font-black text-red-600">Bal: KSh {Number(lease.balance_due).toLocaleString()}</p>
+                            ) : (
+                              <span className="inline-block px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase tracking-widest rounded mt-1">Paid</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           )}
