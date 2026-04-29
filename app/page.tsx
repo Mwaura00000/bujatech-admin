@@ -22,26 +22,17 @@ interface Car {
   nextServiceMileage?: number;  
 }
 
-interface Customer {
-  id: string; 
-  name: string; 
-  phone: string; 
-  idNumber: string;
-  altName: string; 
-  altPhone: string; 
-  altId: string; 
-  altRelationship: string;
-}
-
-// --- NEW BLUEPRINTS FOR LEASES, CLOUD CUSTOMERS & MAINTENANCE ---
 interface LeaseRecord {
   id: string;
+  car_id: string;
   pickup_date: string;
   return_date: string;
+  destination: string;
+  purpose: string;
   total_cost: number;
   balance_due: number;
   status: string;
-  cars: { make: string; model: string; plate: string };
+  cars: { id: string; make: string; model: string; plate: string };
   customers: { full_name: string; phone: string };
 }
 
@@ -55,6 +46,10 @@ interface CustomerRecord {
   alt_id: string;
   alt_relationship: string;
   is_blacklisted?: boolean;
+  id_front_url?: string;
+  id_back_url?: string;
+  dl_front_url?: string;
+  dl_back_url?: string;
 }
 
 interface MaintenanceLogRecord {
@@ -64,12 +59,6 @@ interface MaintenanceLogRecord {
   cost: number;
   mileage_at_service: number;
 }
-
-// --- MOCK RECURRING CUSTOMERS (We will move this to the DB later) ---
-const returningCustomers: Customer[] = [
-  { id: 'c1', name: 'Jane Doe', phone: '0700123456', idNumber: '30123456', altName: 'John Doe', altPhone: '0711123456', altId: '28123456', altRelationship: 'Spouse' },
-  { id: 'c2', name: 'Brian K.', phone: '0722000000', idNumber: '31555666', altName: 'Sarah K.', altPhone: '0733000000', altId: '29555666', altRelationship: 'Sibling' },
-];
 
 // --- CUSTOM TOUCH SIGNATURE PAD COMPONENT ---
 const SignaturePad = ({ onSign }: { onSign: (data: string) => void }) => {
@@ -165,7 +154,7 @@ export default function BujatechAdmin() {
   });
   const [newMileageInput, setNewMileageInput] = useState('');
 
-  // --- PHASE 3 STATES: DEEP DIVE SIDE PANEL ---
+  // --- PHASE 3 STATES: DEEP DIVE CAR SIDE PANEL ---
   const [viewCarDetails, setViewCarDetails] = useState<Car | null>(null);
   const [sidePanelTab, setSidePanelTab] = useState<'telemetry' | 'history' | 'maintenance'>('telemetry');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -174,13 +163,23 @@ export default function BujatechAdmin() {
   const [isPanelLoading, setIsPanelLoading] = useState(false);
   const [newMaintenance, setNewMaintenance] = useState({ description: '', cost: '', mileage: '' });
 
+  // --- PHASE 5 STATES: RETURN VEHICLE ENGINE ---
+  const [returnLeaseData, setReturnLeaseData] = useState<LeaseRecord | null>(null);
+  const [returnMileage, setReturnMileage] = useState('');
+
+  // --- NEW STEP 3 STATES: CLIENT DOSSIER ---
+  const [viewCustomerDetails, setViewCustomerDetails] = useState<CustomerRecord | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [customerLeaseHistory, setCustomerLeaseHistory] = useState<any[]>([]);
+  const [isCustomerPanelLoading, setIsCustomerPanelLoading] = useState(false);
+
   // --- LIVE CLOUD FETCHING: CARS, LEASES, AND CUSTOMERS ---
   const fetchDashboardData = async () => {
     setIsLoading(true);
     try {
       const [carsRes, leasesRes, customersRes] = await Promise.all([
         supabase.from('cars').select(`*, leases(return_date, status, customers(full_name, phone))`).order('make', { ascending: true }),
-        supabase.from('leases').select(`*, cars(make, model, plate), customers(full_name, phone)`).eq('status', 'active').order('return_date', { ascending: true }),
+        supabase.from('leases').select(`*, cars(id, make, model, plate), customers(full_name, phone)`).eq('status', 'active').order('return_date', { ascending: true }),
         supabase.from('customers').select('*').order('full_name', { ascending: true })
       ]);
 
@@ -227,9 +226,9 @@ export default function BujatechAdmin() {
   }, []);
 
   // --- PHASE 3 ENGINE: OPEN CAR PROFILE & FETCH DEEP DATA ---
-  const handleOpenCarDetails = async (car: Car) => {
+  const handleOpenCarDetails = async (car: Car, targetTab: 'telemetry' | 'history' | 'maintenance' = 'telemetry') => {
     setViewCarDetails(car);
-    setSidePanelTab('telemetry');
+    setSidePanelTab(targetTab);
     setIsPanelLoading(true);
 
     try {
@@ -245,6 +244,28 @@ export default function BujatechAdmin() {
       toast.error("Failed to load vehicle history");
     } finally {
       setIsPanelLoading(false);
+    }
+  };
+
+  // --- NEW STEP 3 ENGINE: OPEN CUSTOMER DOSSIER ---
+  const handleOpenCustomerDetails = async (customer: CustomerRecord) => {
+    setViewCustomerDetails(customer);
+    setIsCustomerPanelLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('leases')
+        .select('*, cars(make, model, plate)')
+        .eq('customer_id', customer.id)
+        .order('pickup_date', { ascending: false });
+
+      if (error) throw error;
+      setCustomerLeaseHistory(data || []);
+    } catch (error) {
+      console.error("Error fetching customer history:", error);
+      toast.error("Failed to load client history.");
+    } finally {
+      setIsCustomerPanelLoading(false);
     }
   };
 
@@ -279,42 +300,106 @@ export default function BujatechAdmin() {
     }
   };
 
+  // --- PHASE 4 ENGINE: TOGGLE CUSTOMER BLACKLIST ---
+  const handleToggleBlacklist = async (customerId: string, currentStatus: boolean | undefined) => {
+    toast.loading(currentStatus ? "Restoring client..." : "Blacklisting client...");
+    try {
+      const { error } = await supabase
+        .from('customers')
+        .update({ is_blacklisted: !currentStatus })
+        .eq('id', customerId);
+
+      if (error) throw error;
+      
+      toast.dismiss();
+      toast.success(currentStatus ? "Client Restored Successfully" : "Client Blacklisted Successfully");
+      
+      setCustomersList(customersList.map(c => c.id === customerId ? { ...c, is_blacklisted: !currentStatus } : c));
+      
+      // If the dossier is currently open, update its state too so the badge changes instantly
+      if (viewCustomerDetails && viewCustomerDetails.id === customerId) {
+        setViewCustomerDetails({ ...viewCustomerDetails, is_blacklisted: !currentStatus });
+      }
+    } catch (error) {
+      toast.dismiss();
+      toast.error("Failed to update status");
+      console.error(error);
+    }
+  };
+
+  // --- PHASE 5 ENGINE: RETURN VEHICLE & CLOSE LEASE ---
+  const handleReturnVehicle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!returnLeaseData || !returnMileage) return;
+
+    toast.loading("Processing vehicle return...");
+    try {
+      const { error: leaseError } = await supabase
+        .from('leases')
+        .update({ status: 'completed', return_date: new Date().toISOString() })
+        .eq('id', returnLeaseData.id);
+
+      if (leaseError) throw leaseError;
+
+      const { error: carError } = await supabase
+        .from('cars')
+        .update({ status: 'available', mileage: Number(returnMileage) })
+        .eq('id', returnLeaseData.car_id || returnLeaseData.cars.id);
+
+      if (carError) throw carError;
+
+      toast.dismiss();
+      toast.success("Vehicle Returned Successfully!");
+      
+      setReturnLeaseData(null);
+      setReturnMileage('');
+      fetchDashboardData(); 
+    } catch (error) {
+      toast.dismiss();
+      toast.error("Failed to process return.");
+      console.error(error);
+    }
+  };
+
+  // --- PHASE 5 ENGINE: DELETE VEHICLE FROM FLEET ---
+  const handleDeleteCar = async (carId: string) => {
+    if (!confirm("Are you absolutely sure you want to remove this vehicle? This will permanently delete it from the fleet.")) return;
+    
+    toast.loading("Removing vehicle from cloud...");
+    try {
+      const { error } = await supabase.from('cars').delete().eq('id', carId);
+      if (error) throw error;
+
+      toast.dismiss();
+      toast.success("Vehicle removed from fleet.");
+      setViewCarDetails(null);
+      fetchDashboardData();
+    } catch (error) {
+      toast.dismiss();
+      toast.error("Failed to remove vehicle. Make sure all its active leases are closed.");
+      console.error(error);
+    }
+  };
+
   // --- SMART BOOKING WIZARD STATES ---
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [bookingData, setBookingData] = useState({
-    carId: '',
-    customerName: '',
-    phone: '',
-    idNumber: '',
-    destination: '',
-    purpose: 'Personal / Leisure',
-    pickupDate: '',
-    returnDate: '',
-    amountPaid: '',
-    paymentMethod: 'M-Pesa (Direct)', 
-    idFront: null as File | null,
-    idBack: null as File | null,
-    dlFront: null as File | null,
-    dlBack: null as File | null,
-    altName: '',
-    altPhone: '',
-    altId: '',
-    altRelationship: '',
-    signature: '' 
+    isCloudClient: false, 
+    cloudIdFront: null as string | null,
+    cloudDlFront: null as string | null,
+    carId: '', customerName: '', phone: '', idNumber: '', destination: '', purpose: 'Personal / Leisure',
+    pickupDate: '', returnDate: '', amountPaid: '', paymentMethod: 'M-Pesa (Direct)', 
+    idFront: null as File | null, idBack: null as File | null, dlFront: null as File | null, dlBack: null as File | null, 
+    altName: '', altPhone: '', altId: '', altRelationship: '', signature: '' 
   });
 
-  // --- LIVE MATH & BALANCE CALCULATOR ---
   const availableCars = fleet.filter(c => c.status === 'available');
   const selectedCarDetails = availableCars.find(c => c.id === bookingData.carId);
   
-  let billedDays = 0;
-  let totalCost = 0;
-  let balanceDue = 0;
-  
+  let billedDays = 0; let totalCost = 0; let balanceDue = 0;
   if (bookingData.pickupDate && bookingData.returnDate && selectedCarDetails) {
     const pickupTime = new Date(bookingData.pickupDate).getTime();
     const returnTime = new Date(bookingData.returnDate).getTime();
-    
     if (returnTime > pickupTime) {
       const diffInHours = (returnTime - pickupTime) / (1000 * 60 * 60);
       billedDays = Math.ceil(diffInHours / 24);
@@ -323,6 +408,7 @@ export default function BujatechAdmin() {
     }
   }
 
+  // --- UNIVERSAL SEARCH FILTERS ---
   const filteredFleet = fleet.filter(car => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
@@ -335,178 +421,169 @@ export default function BujatechAdmin() {
     );
   });
 
+  const filteredLeases = activeLeases.filter(lease => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      lease.customers?.full_name.toLowerCase().includes(query) ||
+      lease.cars?.make.toLowerCase().includes(query) ||
+      lease.cars?.model.toLowerCase().includes(query) ||
+      lease.cars?.plate.toLowerCase().includes(query)
+    );
+  });
+
+  const filteredCustomers = customersList.filter(client => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      client.full_name.toLowerCase().includes(query) ||
+      client.phone.includes(query) ||
+      client.id_number.includes(query) ||
+      (client.alt_name && client.alt_name.toLowerCase().includes(query))
+    );
+  });
+
+  // --- PHASE 4 SECURITY: CHECK IF RETURNING CLIENT IS BLACKLISTED ---
   const handleReturningCustomer = (customerId: string) => {
     const customer = customersList.find(c => c.id === customerId);
     if (customer) {
+      if (customer.is_blacklisted) {
+        toast.error("Access Denied", { description: "This client is blacklisted and cannot rent vehicles." });
+        return;
+      }
       setBookingData(prev => ({
         ...prev, 
-        customerName: customer.full_name, 
-        phone: customer.phone, 
-        idNumber: customer.id_number,
-        altName: customer.alt_name || '', 
-        altPhone: customer.alt_phone || '', 
-        altId: customer.alt_id || '', 
-        altRelationship: customer.alt_relationship || ''
+        isCloudClient: true, 
+        cloudIdFront: customer.id_front_url || null,
+        cloudDlFront: customer.dl_front_url || null,
+        customerName: customer.full_name, phone: customer.phone, idNumber: customer.id_number,
+        altName: customer.alt_name || '', altPhone: customer.alt_phone || '', altId: customer.alt_id || '', altRelationship: customer.alt_relationship || ''
       }));
-      toast.success("Customer Profile Loaded!");
+      toast.success("Customer Profile Loaded!", { description: "Their documents are auto-loaded from the cloud vault."});
     }
   };
 
   const generateContractPDF = async () => {
     const element = document.getElementById('receipt-pdf-template');
     if (!element) throw new Error("Template not found");
-    
     const canvas = await html2canvas(element, { scale: 2 });
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF('p', 'mm', 'a4');
     const pdfWidth = pdf.internal.pageSize.getWidth();
     const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-    
     pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
     pdf.save(`Bujatech_Contract_${bookingData.customerName.replace(/\s+/g, '_')}.pdf`);
   };
 
-  // --- SAVE TO CLOUD ENGINE ---
+  // --- SAVE TO CLOUD ENGINE (WITH IMAGE UPLOAD) ---
   const handleSubmitBooking = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!bookingData.idFront || !bookingData.idBack || !bookingData.dlFront || !bookingData.dlBack) {
-      toast.error("Missing Documents", { description: "Please upload the Front and Back of BOTH the ID and Driver's License."});
-      return;
-    }
-
-    if (!bookingData.signature) { 
-      toast.error("Signature Required", { description: "Client must sign the contract." }); 
+    if (!bookingData.isCloudClient && (!bookingData.idFront || !bookingData.idBack || !bookingData.dlFront || !bookingData.dlBack)) { 
+      toast.error("Missing Documents", { description: "Please upload the Front and Back of BOTH the ID and Driver's License."}); 
       return; 
     }
+    if (!bookingData.signature) { toast.error("Signature Required", { description: "Client must sign the contract." }); return; }
+    if (billedDays <= 0) { toast.error("Invalid Dates", { description: "Return date must be after the pickup date."}); return; }
 
-    if (billedDays <= 0) {
-      toast.error("Invalid Dates", { description: "Return date must be after the pickup date."});
-      return;
-    }
-
-    toast.loading("Saving to Cloud & Generating PDF...");
+    toast.loading("Uploading documents & saving lease...", { id: 'save-booking' });
 
     try {
+      let idFrontUrl = null, idBackUrl = null, dlFrontUrl = null, dlBackUrl = null;
+
+      const uploadFile = async (file: File | null, prefix: string) => {
+        if (!file) return null;
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${prefix}_${Date.now()}.${fileExt}`;
+        const { error } = await supabase.storage.from('client_documents').upload(fileName, file);
+        if (error) throw error;
+        const { data } = supabase.storage.from('client_documents').getPublicUrl(fileName);
+        return data.publicUrl;
+      };
+
+      if (!bookingData.isCloudClient) {
+        idFrontUrl = await uploadFile(bookingData.idFront, 'id_front');
+        idBackUrl = await uploadFile(bookingData.idBack, 'id_back');
+        dlFrontUrl = await uploadFile(bookingData.dlFront, 'dl_front');
+        dlBackUrl = await uploadFile(bookingData.dlBack, 'dl_back');
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const customerPayload: any = { 
+        full_name: bookingData.customerName, phone: bookingData.phone, id_number: bookingData.idNumber,
+        alt_name: bookingData.altName, alt_phone: bookingData.altPhone, alt_id: bookingData.altId, alt_relationship: bookingData.altRelationship
+      };
+      
+      if (idFrontUrl) customerPayload.id_front_url = idFrontUrl;
+      if (idBackUrl) customerPayload.id_back_url = idBackUrl;
+      if (dlFrontUrl) customerPayload.dl_front_url = dlFrontUrl;
+      if (dlBackUrl) customerPayload.dl_back_url = dlBackUrl;
+
       const { data: customerData, error: customerError } = await supabase
-        .from('customers')
-        .upsert({ 
-          full_name: bookingData.customerName, 
-          phone: bookingData.phone, 
-          id_number: bookingData.idNumber,
-          alt_name: bookingData.altName,
-          alt_phone: bookingData.altPhone,
-          alt_id: bookingData.altId,
-          alt_relationship: bookingData.altRelationship
-        }, { onConflict: 'id_number' }) 
-        .select()
-        .single();
+        .from('customers').upsert(customerPayload, { onConflict: 'id_number' }).select().single();
 
       if (customerError) throw customerError;
 
-      const { error: leaseError } = await supabase
-        .from('leases')
-        .insert({
-          car_id: bookingData.carId,
-          customer_id: customerData.id,
-          pickup_date: new Date(bookingData.pickupDate).toISOString(),
-          return_date: new Date(bookingData.returnDate).toISOString(),
-          destination: bookingData.destination,
-          purpose: bookingData.purpose,
-          total_cost: totalCost,
-          amount_paid: Number(bookingData.amountPaid) || 0,
-          balance_due: balanceDue,
-          payment_method: bookingData.paymentMethod,
-          status: 'active'
+      const { error: leaseError } = await supabase.from('leases').insert({
+          car_id: bookingData.carId, customer_id: customerData.id,
+          pickup_date: new Date(bookingData.pickupDate).toISOString(), return_date: new Date(bookingData.returnDate).toISOString(),
+          destination: bookingData.destination, purpose: bookingData.purpose, total_cost: totalCost, 
+          amount_paid: Number(bookingData.amountPaid) || 0, balance_due: balanceDue,
+          payment_method: bookingData.paymentMethod, status: 'active'
         });
 
       if (leaseError) throw leaseError;
 
-      const { error: carError } = await supabase
-        .from('cars')
-        .update({ status: 'rented' })
-        .eq('id', bookingData.carId);
-
+      const { error: carError } = await supabase.from('cars').update({ status: 'rented' }).eq('id', bookingData.carId);
       if (carError) throw carError;
 
       await generateContractPDF();
       await fetchDashboardData();
 
-      toast.dismiss();
-      toast.success("Saved to Cloud & Downloaded!", { description: `${bookingData.customerName}'s lease is officially active.` });
+      toast.dismiss('save-booking');
+      toast.success("Saved to Cloud & Downloaded!", { description: `${bookingData.customerName}'s lease is active.` });
       
       setIsBookingOpen(false);
-      setBookingData({ 
-        carId: '', customerName: '', phone: '', idNumber: '', destination: '', purpose: 'Personal / Leisure', 
-        pickupDate: '', returnDate: '', amountPaid: '', paymentMethod: 'M-Pesa (Direct)',
-        idFront: null, idBack: null, dlFront: null, dlBack: null,
-        altName: '', altPhone: '', altId: '', altRelationship: '', signature: '' 
-      });
+      setBookingData({ isCloudClient: false, cloudIdFront: null, cloudDlFront: null, carId: '', customerName: '', phone: '', idNumber: '', destination: '', purpose: 'Personal / Leisure', pickupDate: '', returnDate: '', amountPaid: '', paymentMethod: 'M-Pesa (Direct)', idFront: null, idBack: null, dlFront: null, dlBack: null, altName: '', altPhone: '', altId: '', altRelationship: '', signature: '' });
       
     } catch (error) {
-      toast.dismiss();
+      toast.dismiss('save-booking');
       toast.error("Cloud Sync Failed", { description: "Check network connection or database structure." });
       console.error(error);
     }
   };
 
-  // --- PHASE 2 ENGINE: ADD NEW VEHICLE TO CLOUD ---
   const handleAddVehicle = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCarData.make || !newCarData.model || !newCarData.plate || !newCarData.rate) {
-      toast.error("Missing Data", { description: "Please fill in all required vehicle details."});
-      return;
-    }
+    if (!newCarData.make || !newCarData.model || !newCarData.plate || !newCarData.rate) { toast.error("Missing Data", { description: "Please fill in all required vehicle details."}); return; }
 
     toast.loading("Adding vehicle to fleet...");
     try {
       const { error } = await supabase.from('cars').insert({
-        make: newCarData.make,
-        model: newCarData.model,
-        plate: newCarData.plate.toUpperCase(),
-        status: 'available',
-        rate: Number(newCarData.rate),
-        mileage: Number(newCarData.mileage) || 0,
-        next_service_mileage: Number(newCarData.nextServiceMileage) || 5000
+        make: newCarData.make, model: newCarData.model, plate: newCarData.plate.toUpperCase(), status: 'available',
+        rate: Number(newCarData.rate), mileage: Number(newCarData.mileage) || 0, next_service_mileage: Number(newCarData.nextServiceMileage) || 5000
       });
-
       if (error) throw error;
-
-      toast.dismiss();
-      toast.success("Vehicle Added Successfully!");
+      toast.dismiss(); toast.success("Vehicle Added Successfully!");
       setIsAddCarOpen(false);
       setNewCarData({ make: 'Toyota', model: '', plate: '', rate: '', mileage: '', nextServiceMileage: '' });
       fetchDashboardData(); 
     } catch (error) {
-      toast.dismiss();
-      toast.error("Failed to add vehicle", { description: "Please try again."});
-      console.error(error);
+      toast.dismiss(); toast.error("Failed to add vehicle", { description: "Please try again."}); console.error(error);
     }
   };
 
-  // --- PHASE 2 ENGINE: UPDATE ODOMETER ---
   const handleUpdateMileage = async () => {
     if (!viewCarDetails || !newMileageInput) return;
-    
     toast.loading("Updating Odometer...");
     try {
-      const { error } = await supabase
-        .from('cars')
-        .update({ mileage: Number(newMileageInput) })
-        .eq('id', viewCarDetails.id);
-
+      const { error } = await supabase.from('cars').update({ mileage: Number(newMileageInput) }).eq('id', viewCarDetails.id);
       if (error) throw error;
-
-      toast.dismiss();
-      toast.success("Odometer Updated!");
-      
+      toast.dismiss(); toast.success("Odometer Updated!");
       setViewCarDetails({ ...viewCarDetails, mileage: Number(newMileageInput) });
       setNewMileageInput('');
       fetchDashboardData();
     } catch (error) {
-      toast.dismiss();
-      toast.error("Failed to update odometer");
-      console.error(error);
+      toast.dismiss(); toast.error("Failed to update odometer"); console.error(error);
     }
   };
 
@@ -517,120 +594,50 @@ export default function BujatechAdmin() {
       {/* --- THE OFF-SCREEN PDF RECEIPT TEMPLATE --- */}
       <div id="receipt-pdf-template" className="absolute top-[-9999px] left-[-9999px] bg-white p-10 w-[800px] text-slate-900 border-2 border-slate-900">
         <div className="flex justify-between items-end border-b-4 border-slate-900 pb-6 mb-6">
-          <div>
-            <h1 className="text-4xl font-black tracking-tighter uppercase">Bujatech</h1>
-            <p className="text-sm font-bold tracking-widest text-slate-500 uppercase mt-1">Car Hire & Fleet Management</p>
-          </div>
-          <div className="text-right">
-            <h2 className="text-2xl font-black text-blue-600 uppercase">Lease Agreement</h2>
-            <p className="font-bold text-slate-500">Date: {isMounted ? new Date().toLocaleDateString() : ''}</p>
-          </div>
+          <div><h1 className="text-4xl font-black tracking-tighter uppercase">Bujatech</h1><p className="text-sm font-bold tracking-widest text-slate-500 uppercase mt-1">Car Hire & Fleet Management</p></div>
+          <div className="text-right"><h2 className="text-2xl font-black text-blue-600 uppercase">Lease Agreement</h2><p className="font-bold text-slate-500">Date: {isMounted ? new Date().toLocaleDateString() : ''}</p></div>
         </div>
-
         <div className="grid grid-cols-2 gap-8 mb-8">
           <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
             <h3 className="font-black uppercase tracking-widest text-sm text-slate-400 mb-4 border-b pb-2">Client Details</h3>
-            <p className="font-bold text-lg">{bookingData.customerName}</p>
-            <p className="font-semibold text-slate-600">ID: {bookingData.idNumber}</p>
-            <p className="font-semibold text-slate-600">Phone: {bookingData.phone}</p>
+            <p className="font-bold text-lg">{bookingData.customerName}</p><p className="font-semibold text-slate-600">ID: {bookingData.idNumber}</p><p className="font-semibold text-slate-600">Phone: {bookingData.phone}</p>
           </div>
           <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
             <h3 className="font-black uppercase tracking-widest text-sm text-slate-400 mb-4 border-b pb-2">Vehicle Details</h3>
-            <p className="font-bold text-lg">{selectedCarDetails?.make} {selectedCarDetails?.model}</p>
-            <p className="font-semibold text-slate-600">Plate: <span className="bg-slate-200 px-2 py-0.5 rounded">{selectedCarDetails?.plate}</span></p>
-            <p className="font-semibold text-slate-600">Daily Rate: KSh {selectedCarDetails?.rate?.toLocaleString()}</p>
+            <p className="font-bold text-lg">{selectedCarDetails?.make} {selectedCarDetails?.model}</p><p className="font-semibold text-slate-600">Plate: <span className="bg-slate-200 px-2 py-0.5 rounded">{selectedCarDetails?.plate}</span></p><p className="font-semibold text-slate-600">Daily Rate: KSh {selectedCarDetails?.rate?.toLocaleString()}</p>
           </div>
         </div>
-
         <table className="w-full mb-8 border-collapse">
-          <thead>
-            <tr className="bg-slate-900 text-white text-left uppercase text-xs tracking-widest">
-              <th className="p-4">Description</th>
-              <th className="p-4 text-center">Days</th>
-              <th className="p-4 text-right">Amount (KSh)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-b border-slate-200 text-lg font-bold">
-              <td className="p-4">
-                Vehicle Hire ({bookingData.pickupDate ? new Date(bookingData.pickupDate).toLocaleDateString() : ''} to {bookingData.returnDate ? new Date(bookingData.returnDate).toLocaleDateString() : ''})<br/>
-                <span className="text-sm text-slate-500 font-medium">Destination: {bookingData.destination} | Purpose: {bookingData.purpose}</span>
-              </td>
-              <td className="p-4 text-center">{billedDays}</td>
-              <td className="p-4 text-right">{totalCost.toLocaleString()}</td>
-            </tr>
-          </tbody>
+          <thead><tr className="bg-slate-900 text-white text-left uppercase text-xs tracking-widest"><th className="p-4">Description</th><th className="p-4 text-center">Days</th><th className="p-4 text-right">Amount (KSh)</th></tr></thead>
+          <tbody><tr className="border-b border-slate-200 text-lg font-bold"><td className="p-4">Vehicle Hire ({bookingData.pickupDate ? new Date(bookingData.pickupDate).toLocaleDateString() : ''} to {bookingData.returnDate ? new Date(bookingData.returnDate).toLocaleDateString() : ''})<br/><span className="text-sm text-slate-500 font-medium">Destination: {bookingData.destination} | Purpose: {bookingData.purpose}</span></td><td className="p-4 text-center">{billedDays}</td><td className="p-4 text-right">{totalCost.toLocaleString()}</td></tr></tbody>
         </table>
-
         <div className="flex justify-end mb-12">
           <div className="w-80 space-y-3">
-            <div className="flex justify-between text-slate-500 font-bold">
-              <span>Subtotal:</span>
-              <span>KSh {totalCost.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between text-slate-500 font-bold border-b border-slate-300 pb-3">
-              <span>Amount Paid ({bookingData.paymentMethod}):</span>
-              <span className="text-emerald-600">- KSh {(Number(bookingData.amountPaid) || 0).toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-end bg-slate-100 p-4 rounded-xl border border-slate-300">
-              <span className="text-sm font-bold text-slate-500 uppercase tracking-widest">Balance Due</span>
-              <span className="text-2xl font-black text-red-600">KSh {balanceDue.toLocaleString()}</span>
-            </div>
+            <div className="flex justify-between text-slate-500 font-bold"><span>Subtotal:</span><span>KSh {totalCost.toLocaleString()}</span></div>
+            <div className="flex justify-between text-slate-500 font-bold border-b border-slate-300 pb-3"><span>Amount Paid ({bookingData.paymentMethod}):</span><span className="text-emerald-600">- KSh {(Number(bookingData.amountPaid) || 0).toLocaleString()}</span></div>
+            <div className="flex justify-between items-end bg-slate-100 p-4 rounded-xl border border-slate-300"><span className="text-sm font-bold text-slate-500 uppercase tracking-widest">Balance Due</span><span className="text-2xl font-black text-red-600">KSh {balanceDue.toLocaleString()}</span></div>
           </div>
         </div>
-
         <div className="grid grid-cols-2 gap-12 pt-8 border-t-2 border-slate-200">
-          <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Client Signature</p>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            {bookingData.signature && <img src={bookingData.signature} alt="Client Signature" className="h-16 mb-2" />}
-            <div className="border-t border-slate-400 w-full pt-2">
-              <p className="font-bold">{bookingData.customerName}</p>
-              <p className="text-xs text-slate-500">I agree to the terms and conditions of Bujatech Car Hire. I am fully liable for the vehicle during the lease period.</p>
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Guarantor / Alt Contact</p>
-            <div className="mt-[72px] border-t border-slate-400 w-full pt-2">
-              <p className="font-bold">{bookingData.altName} ({bookingData.altRelationship})</p>
-              <p className="text-xs text-slate-500">ID: {bookingData.altId} | Phone: {bookingData.altPhone}</p>
-            </div>
-          </div>
+          <div><p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Client Signature</p>{/* eslint-disable-next-line @next/next/no-img-element */}{bookingData.signature && <img src={bookingData.signature} alt="Client Signature" className="h-16 mb-2" />}<div className="border-t border-slate-400 w-full pt-2"><p className="font-bold">{bookingData.customerName}</p><p className="text-xs text-slate-500">I agree to the terms and conditions of Bujatech Car Hire. I am fully liable for the vehicle during the lease period.</p></div></div>
+          <div><p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Guarantor / Alt Contact</p><div className="mt-[72px] border-t border-slate-400 w-full pt-2"><p className="font-bold">{bookingData.altName} ({bookingData.altRelationship})</p><p className="text-xs text-slate-500">ID: {bookingData.altId} | Phone: {bookingData.altPhone}</p></div></div>
         </div>
       </div>
 
       {/* --- DESKTOP SIDEBAR --- */}
       <aside className="hidden lg:flex w-64 bg-slate-900 text-white flex-col h-screen fixed shadow-2xl z-20">
-        <div className="p-6 border-b border-slate-800">
-          <h1 className="text-2xl font-black tracking-tight text-white">Bujatech</h1>
-          <p className="text-xs font-bold text-blue-500 uppercase tracking-widest mt-1">Fleet Admin</p>
-        </div>
+        <div className="p-6 border-b border-slate-800"><h1 className="text-2xl font-black tracking-tight text-white">Bujatech</h1><p className="text-xs font-bold text-blue-500 uppercase tracking-widest mt-1">Fleet Admin</p></div>
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          <button onClick={() => setActiveTab('fleet')} className={`w-full flex items-center gap-3 p-4 rounded-xl font-bold transition ${activeTab === 'fleet' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
-            Fleet Grid
-          </button>
-          <button onClick={() => setActiveTab('rentals')} className={`w-full flex items-center gap-3 p-4 rounded-xl font-bold transition ${activeTab === 'rentals' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
-            Active Leases
-          </button>
-          <button onClick={() => setActiveTab('customers')} className={`w-full flex items-center gap-3 p-4 rounded-xl font-bold transition ${activeTab === 'customers' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-            Customers
-          </button>
+          <button onClick={() => setActiveTab('fleet')} className={`w-full flex items-center gap-3 p-4 rounded-xl font-bold transition ${activeTab === 'fleet' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>Fleet Grid</button>
+          <button onClick={() => setActiveTab('rentals')} className={`w-full flex items-center gap-3 p-4 rounded-xl font-bold transition ${activeTab === 'rentals' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>Active Leases</button>
+          <button onClick={() => setActiveTab('customers')} className={`w-full flex items-center gap-3 p-4 rounded-xl font-bold transition ${activeTab === 'customers' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>Customers</button>
         </nav>
       </aside>
 
       {/* --- MAIN CONTENT AREA --- */}
       <main className="flex-1 lg:ml-64 relative min-h-screen">
         <header className="bg-slate-900 text-white p-5 sticky top-0 z-30 shadow-md lg:hidden flex justify-between items-center">
-          <div>
-            <h1 className="text-xl font-black tracking-tight">Bujatech</h1>
-            <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Fleet Admin</p>
-          </div>
-          <button onClick={() => setIsBookingOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white w-10 h-10 rounded-full flex items-center justify-center shadow-lg active:scale-95 transition">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
-          </button>
+          <div><h1 className="text-xl font-black tracking-tight">Bujatech</h1><p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Fleet Admin</p></div>
         </header>
 
         <div className="p-4 sm:p-8">
@@ -645,61 +652,54 @@ export default function BujatechAdmin() {
                  'Database of all recurring clients and their contact details.'}
               </p>
             </div>
-            
             <div className="flex gap-3">
-              {/* PHASE 2: NEW ADD VEHICLE BUTTON */}
               {activeTab === 'fleet' && (
                 <button onClick={() => setIsAddCarOpen(true)} className="bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-700 font-bold py-3.5 px-6 rounded-xl transition flex items-center gap-2 active:scale-95 shadow-sm">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
-                  Add Vehicle
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg> Add Vehicle
                 </button>
               )}
               <button onClick={() => setIsBookingOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-black py-3.5 px-6 rounded-xl shadow-lg shadow-blue-600/30 transition flex items-center gap-2 active:scale-95">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
-                New Booking
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg> New Booking
               </button>
             </div>
+          </div>
+
+          {/* --- UNIVERSAL SEARCH BAR --- */}
+          <div className="relative mb-6">
+            <div className="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none">
+              <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            </div>
+            <input 
+              type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={`Search ${activeTab === 'fleet' ? 'vehicles, plates, or clients' : activeTab === 'rentals' ? 'active leases or vehicles' : 'clients by name, ID, or phone'}...`}
+              className="w-full pl-14 pr-12 py-5 bg-white border-2 border-slate-200 rounded-2xl outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 text-lg font-bold text-slate-900 transition shadow-sm placeholder:font-medium placeholder:text-slate-400"
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery('')} className="absolute inset-y-0 right-0 pr-5 flex items-center text-slate-400 hover:text-slate-600 transition">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            )}
+          </div>
+
+          {/* --- MOBILE ONLY: MAIN ACTION BUTTONS --- */}
+          <div className="lg:hidden mb-6 flex gap-3">
+            {activeTab === 'fleet' && (
+              <button onClick={() => setIsAddCarOpen(true)} className="flex-1 bg-white border-2 border-slate-200 text-slate-700 font-bold py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2 active:scale-95 shadow-sm">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg> Add Vehicle
+              </button>
+            )}
+            <button onClick={() => setIsBookingOpen(true)} className="flex-1 bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2 active:scale-95 shadow-sm">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg> Book Car
+            </button>
           </div>
 
           {/* --- TAB: FLEET OVERVIEW --- */}
           {activeTab === 'fleet' && (
             <div className="space-y-6 animate-in fade-in duration-500">
-              
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none">
-                  <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                </div>
-                <input 
-                  type="text" 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search by model, plate, or customer phone (e.g. 0700)..." 
-                  className="w-full pl-14 pr-12 py-5 bg-white border-2 border-slate-200 rounded-2xl outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 text-lg font-bold text-slate-900 transition shadow-sm placeholder:font-medium placeholder:text-slate-400"
-                />
-                {searchQuery && (
-                  <button 
-                    onClick={() => setSearchQuery('')}
-                    className="absolute inset-y-0 right-0 pr-5 flex items-center text-slate-400 hover:text-slate-600 transition"
-                  >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                  </button>
-                )}
-              </div>
-
-              {/* --- CLOUD LOADING SPINNER OR GRID --- */}
               {isLoading ? (
-                <div className="flex flex-col items-center justify-center py-20 text-center px-4">
-                  <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-                  <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Syncing with Cloud...</p>
-                </div>
+                <div className="flex flex-col items-center justify-center py-20 text-center px-4"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div><p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Syncing with Cloud...</p></div>
               ) : filteredFleet.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-center px-4">
-                  <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center mb-4">
-                     <svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                  </div>
-                  <h2 className="text-2xl font-black text-slate-800 mb-2">No Matches Found</h2>
-                  <p className="text-slate-500 max-w-md">We couldn't find any cars matching "{searchQuery}".</p>
-                </div>
+                <div className="flex flex-col items-center justify-center py-20 text-center px-4"><div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center mb-4"><svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg></div><h2 className="text-2xl font-black text-slate-800 mb-2">No Matches Found</h2><p className="text-slate-500 max-w-md">We couldn't find any cars matching "{searchQuery}".</p></div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 lg:gap-6">
                   {filteredFleet.map(car => {
@@ -709,71 +709,42 @@ export default function BujatechAdmin() {
 
                     return (
                       <div key={car.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md transition-shadow flex flex-col relative overflow-hidden">
-                        
-                        <div className={`h-1.5 w-full absolute top-0 left-0 ${
-                          isAvailable ? 'bg-emerald-500' : isRented ? 'bg-blue-600' : 'bg-red-500'
-                        }`}></div>
-
-                        {/* --- CLICKABLE CARD BODY --- */}
-                        <div className="p-6 pb-4 flex-1 cursor-pointer hover:bg-slate-50 transition" onClick={() => handleOpenCarDetails(car)}>
+                        <div className={`h-1.5 w-full absolute top-0 left-0 ${isAvailable ? 'bg-emerald-500' : isRented ? 'bg-blue-600' : 'bg-red-500'}`}></div>
+                        <div className="p-6 pb-4 flex-1 cursor-pointer hover:bg-slate-50 transition" onClick={() => handleOpenCarDetails(car, 'telemetry')}>
                           <div className="flex justify-between items-start mb-4">
                             <div>
                               <h3 className="font-black text-lg text-slate-900 leading-tight">{car.make} {car.model}</h3>
-                              <div className="inline-block mt-2 px-3 py-1 bg-slate-100 border border-slate-300 rounded-md">
-                                <p className="text-sm font-bold text-slate-700 tracking-wider">{car.plate}</p>
-                              </div>
+                              <div className="inline-block mt-2 px-3 py-1 bg-slate-100 border border-slate-300 rounded-md"><p className="text-sm font-bold text-slate-700 tracking-wider">{car.plate}</p></div>
                             </div>
-                            <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                              isAvailable ? 'bg-emerald-100 text-emerald-800' : 
-                              isRented ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'
-                            }`}>
-                              {car.status}
-                            </span>
+                            <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${isAvailable ? 'bg-emerald-100 text-emerald-800' : isRented ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'}`}>{car.status}</span>
                           </div>
-
                           <div className="mt-4 pt-4 border-t border-slate-100">
                             {isAvailable && (
-                              <div className="flex justify-between items-center">
-                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Rate</span>
-                                <span className="font-black text-slate-800">KSh {car.rate.toLocaleString()} <span className="text-xs font-semibold text-slate-400">/day</span></span>
-                              </div>
+                              <div className="flex justify-between items-center"><span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Rate</span><span className="font-black text-slate-800">KSh {car.rate.toLocaleString()} <span className="text-xs font-semibold text-slate-400">/day</span></span></div>
                             )}
-                            
                             {isRented && (
                               <div className="space-y-3">
-                                <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                                  <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">{car.customerName || 'Client'}</span>
-                                  <span className="text-sm font-black text-slate-800">{car.customerPhone || 'N/A'}</span>
-                                </div>
-                                <div className="flex items-center gap-2 text-blue-700 bg-blue-50 p-2.5 rounded-lg border border-blue-100">
-                                  <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                                  <span className="text-sm font-bold truncate">Due: {car.returnDate || 'Pending'}</span>
-                                </div>
+                                <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg border border-slate-100"><span className="text-xs font-bold text-slate-500 uppercase tracking-widest">{car.customerName || 'Client'}</span><span className="text-sm font-black text-slate-800">{car.customerPhone || 'N/A'}</span></div>
+                                <div className="flex items-center gap-2 text-blue-700 bg-blue-50 p-2.5 rounded-lg border border-blue-100"><svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span className="text-sm font-bold truncate">Due: {car.returnDate || 'Pending'}</span></div>
                               </div>
                             )}
-
                             {isMaintenance && (
-                              <div className="flex items-center gap-2 text-red-700 bg-red-50 p-2.5 rounded-lg border border-red-100">
-                                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/></svg>
-                                <span className="text-sm font-bold truncate">{car.note}</span>
-                              </div>
+                              <div className="flex items-center gap-2 text-red-700 bg-red-50 p-2.5 rounded-lg border border-red-100"><svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/></svg><span className="text-sm font-bold truncate">{car.note}</span></div>
                             )}
                           </div>
                         </div>
-
-                        {/* Card Action Buttons */}
                         <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
                           {isAvailable ? (
                             <button onClick={() => { setBookingData({...bookingData, carId: car.id}); setIsBookingOpen(true); }} className="flex-1 bg-slate-900 hover:bg-black text-white py-3 rounded-xl font-bold text-sm transition">Book Car</button>
                           ) : isRented ? (
                             <>
-                              <button className="flex-1 bg-white border border-slate-200 hover:border-slate-400 text-slate-800 py-3 rounded-xl font-bold text-sm transition">View Lease</button>
+                              <button onClick={() => handleOpenCarDetails(car, 'history')} className="flex-1 bg-white border border-slate-200 hover:border-slate-400 text-slate-800 py-3 rounded-xl font-bold text-sm transition">View Lease</button>
                               <a href={`tel:${car.customerPhone}`} className="px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition flex justify-center items-center shadow-md">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
                               </a>
                             </>
                           ) : (
-                            <button className="flex-1 bg-white border border-slate-200 hover:bg-slate-100 text-slate-800 py-3 rounded-xl font-bold text-sm transition">Update Status</button>
+                            <button onClick={() => handleOpenCarDetails(car, 'telemetry')} className="flex-1 bg-white border border-slate-200 hover:bg-slate-100 text-slate-800 py-3 rounded-xl font-bold text-sm transition">Update Status</button>
                           )}
                         </div>
                       </div>
@@ -784,16 +755,16 @@ export default function BujatechAdmin() {
             </div>
           )}
 
-          {/* --- TAB: ACTIVE LEASES (RESPONSIVE FIX APPLIED) --- */}
+          {/* --- TAB: ACTIVE LEASES --- */}
           {activeTab === 'rentals' && (
             <div className="space-y-6 animate-in fade-in duration-500">
               {isLoading ? (
                  <div className="flex flex-col items-center justify-center py-20 text-center px-4"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div><p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Syncing Leases...</p></div>
-              ) : activeLeases.length === 0 ? (
+              ) : filteredLeases.length === 0 ? (
                 <div className="bg-white p-10 rounded-2xl border border-slate-200 text-center shadow-sm">
                   <div className="w-20 h-20 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-4"><svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
-                  <h3 className="text-xl font-black text-slate-900 mb-2">No Active Leases</h3>
-                  <p className="text-slate-500 mb-6">All vehicles are currently available in the yard.</p>
+                  <h3 className="text-xl font-black text-slate-900 mb-2">No Active Leases Found</h3>
+                  <p className="text-slate-500 mb-6">All vehicles are currently available in the yard or your search didn't match.</p>
                   <button onClick={() => setIsBookingOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl transition">Create New Lease</button>
                 </div>
               ) : (
@@ -811,7 +782,7 @@ export default function BujatechAdmin() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {activeLeases.map((lease) => (
+                          {filteredLeases.map((lease) => (
                             <tr key={lease.id} className="hover:bg-slate-50/50 transition">
                               <td className="p-5 whitespace-nowrap">
                                 <p className="font-bold text-slate-900 text-base">{lease.customers?.full_name}</p>
@@ -822,10 +793,12 @@ export default function BujatechAdmin() {
                                   <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                                   <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Out: {new Date(lease.pickup_date).toLocaleDateString()}</p>
                                 </div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 mb-2">
                                   <span className="w-2 h-2 rounded-full bg-blue-500"></span>
                                   <p className="text-sm font-black text-slate-800">Due: {new Date(lease.return_date).toLocaleDateString()}</p>
                                 </div>
+                                <p className="text-[10px] font-bold text-slate-400 truncate w-48"><span className="uppercase">Dest:</span> {lease.destination || 'N/A'}</p>
+                                <p className="text-[10px] font-bold text-slate-400 truncate w-48"><span className="uppercase">Purpose:</span> {lease.purpose || 'N/A'}</p>
                               </td>
                               <td className="p-5 whitespace-nowrap">
                                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Total: KSh {Number(lease.total_cost).toLocaleString()}</p>
@@ -836,7 +809,7 @@ export default function BujatechAdmin() {
                                 )}
                               </td>
                               <td className="p-5 text-right whitespace-nowrap">
-                                 <button className="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md transition">Manage</button>
+                                 <button onClick={() => setReturnLeaseData(lease)} className="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md transition">Return Vehicle</button>
                               </td>
                             </tr>
                           ))}
@@ -846,15 +819,15 @@ export default function BujatechAdmin() {
                   </div>
 
                   {/* MOBILE VIEW: VERTICAL STACKED CARDS */}
-                  <div className="md:hidden divide-y divide-slate-100 bg-white rounded-2xl shadow-sm border border-slate-200">
-                    {activeLeases.map((lease) => (
-                      <div key={lease.id} className="p-5 space-y-4">
+                  <div className="md:hidden space-y-4">
+                    {filteredLeases.map((lease) => (
+                      <div key={lease.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                         <div className="flex justify-between items-start">
                           <div>
                             <p className="font-bold text-slate-900 text-lg leading-tight">{lease.customers?.full_name}</p>
                             <p className="text-sm font-semibold text-blue-600 mt-0.5">{lease.cars?.make} {lease.cars?.model} <span className="text-slate-400">({lease.cars?.plate})</span></p>
                           </div>
-                          <button className="bg-slate-900 hover:bg-black text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-md transition">Manage</button>
+                          <button onClick={() => setReturnLeaseData(lease)} className="bg-slate-900 hover:bg-black text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-md transition">Return</button>
                         </div>
                         
                         <div className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-100">
@@ -877,6 +850,11 @@ export default function BujatechAdmin() {
                             )}
                           </div>
                         </div>
+
+                        <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 mt-2">
+                           <p className="text-[10px] font-bold text-slate-500"><span className="uppercase text-slate-400">Dest:</span> {lease.destination || 'N/A'}</p>
+                           <p className="text-[10px] font-bold text-slate-500"><span className="uppercase text-slate-400">Purpose:</span> {lease.purpose || 'N/A'}</p>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -885,22 +863,27 @@ export default function BujatechAdmin() {
             </div>
           )}
 
-          {/* --- TAB: CUSTOMERS --- */}
+          {/* --- TAB: CUSTOMERS DOSSIER ENABLED --- */}
           {activeTab === 'customers' && (
              <div className="space-y-6 animate-in fade-in duration-500">
                {isLoading ? (
                  <div className="flex flex-col items-center justify-center py-20 text-center px-4"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div><p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Syncing Directory...</p></div>
-               ) : customersList.length === 0 ? (
+               ) : filteredCustomers.length === 0 ? (
                 <div className="bg-white p-10 rounded-2xl border border-slate-200 text-center shadow-sm">
-                  <h3 className="text-xl font-black text-slate-900 mb-2">No Customers Yet</h3>
-                  <p className="text-slate-500">Your client directory will populate automatically when you create leases.</p>
+                  <h3 className="text-xl font-black text-slate-900 mb-2">No Customers Found</h3>
+                  <p className="text-slate-500">Your client directory is empty or your search didn't match anyone.</p>
                 </div>
                ) : (
                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                   {customersList.map(client => (
-                     <div key={client.id} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition">
+                   {filteredCustomers.map(client => (
+                     <div 
+                        key={client.id} 
+                        onClick={() => handleOpenCustomerDetails(client)}
+                        className={`bg-white border ${client.is_blacklisted ? 'border-red-300' : 'border-slate-200'} rounded-2xl p-6 shadow-sm hover:shadow-md transition relative overflow-hidden cursor-pointer`}
+                      >
+                       {client.is_blacklisted && <div className="absolute top-0 left-0 w-full h-1.5 bg-red-500"></div>}
                        <div className="flex items-center gap-4 border-b border-slate-100 pb-4 mb-4">
-                         <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-black text-xl">
+                         <div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-xl ${client.is_blacklisted ? 'bg-red-50 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
                            {client.full_name.charAt(0)}
                          </div>
                          <div>
@@ -919,6 +902,14 @@ export default function BujatechAdmin() {
                            <p className="text-xs font-semibold text-blue-600 mt-0.5">{client.alt_phone}</p>
                          </div>
                        </div>
+                       <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
+                         <button 
+                           onClick={(e) => { e.stopPropagation(); handleToggleBlacklist(client.id, client.is_blacklisted); }} 
+                           className={`text-xs font-bold px-3 py-1.5 rounded-md transition ${client.is_blacklisted ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-red-50 text-red-600 hover:bg-red-100'}`}
+                         >
+                           {client.is_blacklisted ? 'Restore Client' : 'Blacklist Client'}
+                         </button>
+                       </div>
                      </div>
                    ))}
                  </div>
@@ -928,13 +919,141 @@ export default function BujatechAdmin() {
         </div>
       </main>
 
+      {/* --- NEW STEP 3: CUSTOMER DOSSIER SIDE PANEL --- */}
+      {viewCustomerDetails && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={() => setViewCustomerDetails(null)}></div>
+          
+          <div className="relative w-full max-w-md bg-slate-50 h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+            <div className="p-6 border-b border-slate-200 bg-white z-10">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-2xl font-black text-slate-900 tracking-tight">{viewCustomerDetails.full_name}</h2>
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mt-1">ID: {viewCustomerDetails.id_number}</p>
+                </div>
+                <button onClick={() => setViewCustomerDetails(null)} className="w-8 h-8 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center hover:bg-slate-200 transition">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <a href={`tel:${viewCustomerDetails.phone}`} className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold py-2 rounded-lg text-xs text-center transition flex justify-center items-center gap-2">
+                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg> Call
+                </a>
+                <button onClick={() => handleToggleBlacklist(viewCustomerDetails.id, viewCustomerDetails.is_blacklisted)} className={`flex-1 font-bold py-2 rounded-lg text-xs text-center transition ${viewCustomerDetails.is_blacklisted ? 'bg-slate-200 text-slate-700 hover:bg-slate-300' : 'bg-red-50 text-red-600 hover:bg-red-100'}`}>
+                  {viewCustomerDetails.is_blacklisted ? 'Restore' : 'Blacklist'}
+                </button>
+              </div>
+              {viewCustomerDetails.is_blacklisted && (
+                <div className="mt-4 bg-red-100 text-red-800 p-3 rounded-lg text-xs font-black uppercase tracking-widest text-center flex items-center justify-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                  Client is Blacklisted
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-6 flex-1">
+              {isCustomerPanelLoading ? (
+                <div className="flex justify-center py-10"><div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Spent</p>
+                      <p className="font-black text-emerald-600 text-lg">KSh {customerLeaseHistory.reduce((sum, lease) => sum + Number(lease.total_cost), 0).toLocaleString()}</p>
+                    </div>
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Rentals</p>
+                      <p className="font-black text-blue-600 text-lg">{customerLeaseHistory.length} Trips</p>
+                    </div>
+                  </div>
+
+                  {(viewCustomerDetails.id_front_url || viewCustomerDetails.dl_front_url) && (
+                    <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                      <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2">Cloud Document Vault</h3>
+                      <div className="grid grid-cols-2 gap-3">
+                        {viewCustomerDetails.id_front_url && (
+                          <a href={viewCustomerDetails.id_front_url} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-xl border-2 border-slate-200">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={viewCustomerDetails.id_front_url} alt="ID Front" className="w-full h-24 object-cover object-center group-hover:scale-110 transition duration-300" />
+                            <div className="absolute inset-0 bg-slate-900/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><span className="text-white text-[10px] font-black uppercase tracking-widest">View ID</span></div>
+                          </a>
+                        )}
+                        {viewCustomerDetails.dl_front_url && (
+                          <a href={viewCustomerDetails.dl_front_url} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-xl border-2 border-slate-200">
+                             {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={viewCustomerDetails.dl_front_url} alt="DL Front" className="w-full h-24 object-cover object-center group-hover:scale-110 transition duration-300" />
+                            <div className="absolute inset-0 bg-slate-900/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><span className="text-white text-[10px] font-black uppercase tracking-widest">View DL</span></div>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest pl-1">Rental Timeline</h3>
+                    {customerLeaseHistory.length === 0 ? (
+                      <div className="text-center py-6 text-slate-400 font-bold text-sm">No rental history found.</div>
+                    ) : (
+                      customerLeaseHistory.map((lease) => (
+                        <div key={lease.id} className={`p-4 rounded-xl border ${lease.status === 'active' ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-200 shadow-sm'}`}>
+                          <div className="flex justify-between items-start mb-2">
+                            <span className="font-black text-slate-900">{lease.cars?.make} {lease.cars?.model} <span className="text-slate-400 font-bold text-sm">({lease.cars?.plate})</span></span>
+                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${lease.status === 'active' ? 'bg-blue-200 text-blue-800' : 'bg-slate-100 text-slate-500'}`}>{lease.status}</span>
+                          </div>
+                          <p className="text-xs font-bold text-slate-500 mb-3">{new Date(lease.pickup_date).toLocaleDateString()} &rarr; {new Date(lease.return_date).toLocaleDateString()}</p>
+                          <div className="flex justify-between items-center border-t border-slate-100 pt-2 mt-2">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cost</span>
+                            <span className="font-black text-slate-800">KSh {Number(lease.total_cost).toLocaleString()}</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            
+            <div className="p-4 bg-white border-t border-slate-200">
+               <button onClick={() => setViewCustomerDetails(null)} className="w-full bg-slate-900 hover:bg-black text-white font-black py-4 rounded-xl transition">Close Dossier</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- PHASE 5: RETURN VEHICLE MODAL --- */}
+      {returnLeaseData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={() => setReturnLeaseData(null)}></div>
+          <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100">
+              <h2 className="text-xl font-black text-slate-900">Return Vehicle</h2>
+              <p className="text-sm font-medium text-slate-500 mt-1">Close the active lease for <span className="font-bold text-blue-600">{returnLeaseData.cars.make} {returnLeaseData.cars.model}</span>.</p>
+            </div>
+            <form onSubmit={handleReturnVehicle} className="p-6 space-y-5 bg-slate-50">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Client Returning</label>
+                <div className="p-4 bg-white border border-slate-200 rounded-xl font-bold text-slate-800">{returnLeaseData.customers.full_name}</div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Current Odometer (Required)</label>
+                <input type="number" required value={returnMileage} onChange={e => setReturnMileage(e.target.value)} placeholder="Enter exact mileage..." className="w-full p-4 bg-white border-2 border-slate-200 rounded-xl outline-none focus:border-blue-500 text-lg font-black text-slate-900 shadow-sm" />
+                <p className="text-[10px] text-slate-400 mt-2 font-medium">This will instantly update the car's telemetry data.</p>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setReturnLeaseData(null)} className="px-6 py-4 bg-white border border-slate-200 text-slate-600 font-bold rounded-xl transition hover:bg-slate-100">Cancel</button>
+                <button type="submit" disabled={!returnMileage} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl transition shadow-lg shadow-blue-600/30 disabled:opacity-50 disabled:shadow-none">Complete Return</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* --- PHASE 3: DEEP DIVE VEHICLE PROFILE SIDE PANEL --- */}
       {viewCarDetails && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={() => setViewCarDetails(null)}></div>
           
           <div className="relative w-full max-w-md bg-slate-50 h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
-            {/* Header */}
             <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-white z-10">
               <div>
                 <h2 className="text-xl font-black text-slate-900 tracking-tight">{viewCarDetails.make} {viewCarDetails.model}</h2>
@@ -945,7 +1064,6 @@ export default function BujatechAdmin() {
               </button>
             </div>
 
-            {/* Profile Tabs Navigation */}
             <div className="flex bg-white border-b border-slate-200">
               <button onClick={() => setSidePanelTab('telemetry')} className={`flex-1 py-4 text-xs font-black uppercase tracking-widest transition border-b-2 ${sidePanelTab === 'telemetry' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Status</button>
               <button onClick={() => setSidePanelTab('history')} className={`flex-1 py-4 text-xs font-black uppercase tracking-widest transition border-b-2 ${sidePanelTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Leases</button>
@@ -957,7 +1075,6 @@ export default function BujatechAdmin() {
                 <div className="flex justify-center py-10"><div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
               ) : (
                 <>
-                  {/* TAB 1: TELEMETRY (Standard Status) */}
                   {sidePanelTab === 'telemetry' && (
                     <div className="space-y-6 animate-in fade-in">
                       <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex justify-between items-center">
@@ -994,7 +1111,6 @@ export default function BujatechAdmin() {
                             <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest text-right">⚠️ Service Approaching</p>
                           )}
 
-                          {/* Phase 2: Manual Update Odometer */}
                           <div className="mt-4 pt-4 border-t border-slate-100 flex gap-2">
                             <input type="number" placeholder="New Mileage..." value={newMileageInput} onChange={(e) => setNewMileageInput(e.target.value)} className="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 text-sm font-bold" />
                             <button onClick={handleUpdateMileage} disabled={!newMileageInput} className="bg-slate-900 text-white px-4 rounded-lg text-xs font-bold uppercase tracking-widest hover:bg-black transition disabled:opacity-50">Update</button>
@@ -1012,10 +1128,15 @@ export default function BujatechAdmin() {
                           </div>
                         </div>
                       )}
+                      
+                      {/* PHASE 5: DELETE VEHICLE BUTTON */}
+                      <button onClick={() => handleDeleteCar(viewCarDetails.id)} className="w-full mt-8 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 py-4 rounded-xl font-black text-sm transition flex items-center justify-center gap-2">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        Remove Vehicle From Fleet
+                      </button>
                     </div>
                   )}
 
-                  {/* TAB 2: LEASE HISTORY */}
                   {sidePanelTab === 'history' && (
                     <div className="space-y-4 animate-in fade-in">
                       {carLeaseHistory.length === 0 ? (
@@ -1038,10 +1159,8 @@ export default function BujatechAdmin() {
                     </div>
                   )}
 
-                  {/* TAB 3: MAINTENANCE LOGS */}
                   {sidePanelTab === 'maintenance' && (
                     <div className="space-y-6 animate-in fade-in">
-                      {/* Add Maintenance Form */}
                       <form onSubmit={handleAddMaintenance} className="bg-slate-900 p-5 rounded-2xl shadow-lg">
                         <h3 className="text-xs font-black text-slate-300 uppercase tracking-widest mb-4">Log New Service</h3>
                         <div className="space-y-3">
@@ -1054,7 +1173,6 @@ export default function BujatechAdmin() {
                         </div>
                       </form>
 
-                      {/* Maintenance History List */}
                       <div className="space-y-3">
                         {maintenanceLogs.length === 0 ? (
                           <div className="text-center py-6 text-slate-400 font-bold text-sm">No maintenance logged yet.</div>
@@ -1178,7 +1296,6 @@ export default function BujatechAdmin() {
 
             <form onSubmit={handleSubmitBooking} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
               
-              {/* Step 1: Select Vehicle */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                 <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3">1. Select Vehicle</label>
                 <select 
@@ -1201,7 +1318,6 @@ export default function BujatechAdmin() {
                 )}
               </div>
 
-              {/* Step 2: Trip Logistics & Billing */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                 <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 border-b border-slate-100 pb-2">2. Trip & Billing Schedule</label>
                 
@@ -1254,7 +1370,6 @@ export default function BujatechAdmin() {
                 ) : null}
               </div>
 
-              {/* Step 3: PAYMENT DETAILS */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 border-b border-slate-100 pb-2">3. Payment Details</label>
                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1272,7 +1387,6 @@ export default function BujatechAdmin() {
                  </div>
               </div>
 
-              {/* Step 4: Client Identity & Alternative Contact */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-5">
                 <div className="flex justify-between items-end border-b border-slate-100 pb-2 mb-1">
                   <label className="block text-xs font-black text-slate-400 uppercase tracking-widest">4. Identity & Contacts</label>
@@ -1331,7 +1445,6 @@ export default function BujatechAdmin() {
                 </div>
               </div>
 
-              {/* Step 5: DIGITAL SIGNATURE */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                 <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1 border-b border-slate-100 pb-2">5. Legal Digital Signature</label>
                 <p className="text-xs font-medium text-slate-500 mb-4 mt-2">I agree to the terms of the lease and accept liability for the vehicle during the selected period.</p>
@@ -1344,76 +1457,78 @@ export default function BujatechAdmin() {
                 )}
               </div>
 
-              {/* Step 6: Document Uploads */}
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-20">
-                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">6. Secure Documents (Front & Back)</label>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <label className="cursor-pointer">
-                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
-                      if(e.target.files && e.target.files[0]) setBookingData({...bookingData, idFront: e.target.files[0]})
-                    }} />
-                    {bookingData.idFront ? (
-                      <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
-                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
-                        <span className="text-[9px] font-black uppercase tracking-widest">ID Front</span>
-                      </div>
-                    ) : (
-                      <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-center">ID (Front)</span>
-                      </div>
-                    )}
-                  </label>
+              {!bookingData.isCloudClient && (
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm mb-20">
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">6. Secure Documents (Front & Back)</label>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <label className="cursor-pointer">
+                      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
+                        if(e.target.files && e.target.files[0]) setBookingData({...bookingData, idFront: e.target.files[0]})
+                      }} />
+                      {bookingData.idFront ? (
+                        <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
+                          <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
+                          <span className="text-[9px] font-black uppercase tracking-widest">ID Front</span>
+                        </div>
+                      ) : (
+                        <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-center">ID (Front)</span>
+                        </div>
+                      )}
+                    </label>
 
-                  <label className="cursor-pointer">
-                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
-                      if(e.target.files && e.target.files[0]) setBookingData({...bookingData, idBack: e.target.files[0]})
-                    }} />
-                    {bookingData.idBack ? (
-                      <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
-                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
-                        <span className="text-[9px] font-black uppercase tracking-widest">ID Back</span>
-                      </div>
-                    ) : (
-                      <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-center">ID (Back)</span>
-                      </div>
-                    )}
-                  </label>
+                    <label className="cursor-pointer">
+                      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
+                        if(e.target.files && e.target.files[0]) setBookingData({...bookingData, idBack: e.target.files[0]})
+                      }} />
+                      {bookingData.idBack ? (
+                        <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
+                          <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
+                          <span className="text-[9px] font-black uppercase tracking-widest">ID Back</span>
+                        </div>
+                      ) : (
+                        <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-center">ID (Back)</span>
+                        </div>
+                      )}
+                    </label>
 
-                  <label className="cursor-pointer">
-                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
-                       if(e.target.files && e.target.files[0]) setBookingData({...bookingData, dlFront: e.target.files[0]})
-                    }} />
-                    {bookingData.dlFront ? (
-                      <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
-                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
-                        <span className="text-[9px] font-black uppercase tracking-widest">DL Front</span>
-                      </div>
-                    ) : (
-                      <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-center">DL (Front)</span>
-                      </div>
-                    )}
-                  </label>
+                    <label className="cursor-pointer">
+                      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
+                         if(e.target.files && e.target.files[0]) setBookingData({...bookingData, dlFront: e.target.files[0]})
+                      }} />
+                      {bookingData.dlFront ? (
+                        <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
+                          <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
+                          <span className="text-[9px] font-black uppercase tracking-widest">DL Front</span>
+                        </div>
+                      ) : (
+                        <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-center">DL (Front)</span>
+                        </div>
+                      )}
+                    </label>
 
-                  <label className="cursor-pointer">
-                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
-                       if(e.target.files && e.target.files[0]) setBookingData({...bookingData, dlBack: e.target.files[0]})
-                    }} />
-                    {bookingData.dlBack ? (
-                      <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
-                        <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
-                        <span className="text-[9px] font-black uppercase tracking-widest">DL Back</span>
-                      </div>
-                    ) : (
-                      <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-center">DL (Back)</span>
-                      </div>
-                    )}
-                  </label>
+                    <label className="cursor-pointer">
+                      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
+                         if(e.target.files && e.target.files[0]) setBookingData({...bookingData, dlBack: e.target.files[0]})
+                      }} />
+                      {bookingData.dlBack ? (
+                        <div className="h-20 bg-emerald-50 border-2 border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-600 transition animate-in zoom-in">
+                          <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
+                          <span className="text-[9px] font-black uppercase tracking-widest">DL Back</span>
+                        </div>
+                      ) : (
+                        <div className="h-20 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:bg-slate-100 hover:border-blue-400 hover:text-blue-600 transition">
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-center">DL (Back)</span>
+                        </div>
+                      )}
+                    </label>
+                  </div>
                 </div>
-              </div>
+              )}
+
             </form>
 
             <div className="p-4 sm:p-6 border-t border-slate-200 bg-white z-10 flex gap-3 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
@@ -1423,15 +1538,14 @@ export default function BujatechAdmin() {
                 disabled={
                   !bookingData.carId || !bookingData.customerName || !bookingData.altName || 
                   !bookingData.altId || !bookingData.altPhone || !bookingData.altRelationship || 
-                  !bookingData.signature || !bookingData.idFront || !bookingData.idBack || 
-                  !bookingData.dlFront || !bookingData.dlBack || !bookingData.amountPaid || billedDays <= 0
+                  !bookingData.signature || (!bookingData.isCloudClient && (!bookingData.idFront || !bookingData.idBack || !bookingData.dlFront || !bookingData.dlBack)) || !bookingData.amountPaid || billedDays <= 0
                 }
                 className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl transition shadow-lg shadow-blue-600/30 disabled:opacity-50 disabled:shadow-none flex justify-center items-center gap-2"
               >
                 {billedDays > 0 && bookingData.signature ? (
                   <>
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                    Confirm & Download PDF
+                    Confirm & Upload
                   </>
                 ) : 'Complete Form & Sign'}
               </button>
