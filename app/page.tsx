@@ -824,7 +824,7 @@ export default function BujatechAdmin() {
       </div>
 
       {/* --- MAIN CONTENT AREA --- */}
-      <main className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} p-4 lg:p-8 pt-24 lg:pt-8 w-full bg-slate-50 min-h-screen`}>
+      <main className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} p-4 lg:p-8 pt-24 lg:pt-8 pb-28 lg:pb-8 w-full bg-slate-50 min-h-screen`}>
         
         {/* Header & Search */}
         <div className="mb-8 flex flex-col gap-4 md:gap-6 max-w-7xl mx-auto">
