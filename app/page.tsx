@@ -145,6 +145,7 @@ export default function BujatechAdmin() {
     cloudDlBack: null as string | null,
     carId: '', destination: '', purpose: 'Personal / Leisure', pickupDate: '', returnDate: '', amountPaid: '', paymentMethod: 'M-Pesa (Direct)',
     customerName: '', phone: '', idNumber: '', altName: '', altPhone: '', altId: '', altRelationship: '', signature: '',
+    refereeName: '', refereePhone: '', refereeId: '',
     idFront: null as File | null, idBack: null as File | null, dlFront: null as File | null, dlBack: null as File | null
   });
 
@@ -225,7 +226,7 @@ export default function BujatechAdmin() {
   const fetchCarDetails = async (carId: string) => {
     const [maintRes, leasesRes] = await Promise.all([
       supabase.from('maintenance_logs').select('*').eq('car_id', carId).order('service_date', { ascending: false }),
-      supabase.from('leases').select('*, customers(full_name)').eq('car_id', carId).order('pickup_date', { ascending: false })
+      supabase.from('leases').select('*, customers(full_name, phone)').eq('car_id', carId).order('pickup_date', { ascending: false })
     ]);
     if (maintRes.data) setCarMaintenanceLogs(maintRes.data);
     if (leasesRes.data) setCarLeaseHistory(leasesRes.data);
@@ -296,9 +297,13 @@ export default function BujatechAdmin() {
         altName: customer.alt_name || '',
         altPhone: customer.alt_phone || '',
         altId: customer.alt_id || '',
-        altRelationship: customer.alt_relationship || ''
+        altRelationship: customer.alt_relationship || '',
+        refereeName: customer.referee_name || '',
+        refereePhone: customer.referee_phone || '',
+        refereeId: customer.referee_id || '',
+        signature: customer.signature_data || ''
       }));
-      toast.success("Client Data & Documents Loaded");
+      toast.success(customer.signature_data ? "Client Data, Documents & Signature Loaded" : "Client Data & Documents Loaded");
     }
   };
 
@@ -335,6 +340,24 @@ export default function BujatechAdmin() {
     }
   };
 
+  // Upload Helper
+  const uploadDocument = async (file: File | null, prefix: string, customerIdNumber: string) => {
+    if (!file) return null;
+    const fileExt = file.name.split('.').pop() || 'jpg';
+    const fileName = `${customerIdNumber}_${prefix}_${Date.now()}.${fileExt}`;
+    
+    try {
+      const { data, error } = await supabase.storage.from('documents').upload(fileName, file, { upsert: true });
+      if (error) throw error;
+      
+      const { data: publicUrlData } = supabase.storage.from('documents').getPublicUrl(fileName);
+      return publicUrlData.publicUrl;
+    } catch (e) {
+      console.error(`Failed to upload ${prefix}:`, e);
+      return null;
+    }
+  };
+
   // Submit Logic
   const handleSubmitBooking = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -345,12 +368,45 @@ export default function BujatechAdmin() {
     toast.loading("Uploading documents & saving lease...", { id: 'save-booking' });
 
     try {
+      // 1. Upsert Customer details (without document URLs first to get ID)
       const { data: customerData, error: customerError } = await supabase.from('customers').upsert({
         full_name: bookingData.customerName, phone: bookingData.phone, id_number: bookingData.idNumber,
-        alt_name: bookingData.altName, alt_phone: bookingData.altPhone, alt_id: bookingData.altId, alt_relationship: bookingData.altRelationship
+        alt_name: bookingData.altName, alt_phone: bookingData.altPhone, alt_id: bookingData.altId, alt_relationship: bookingData.altRelationship,
+        referee_name: bookingData.refereeName || null, referee_phone: bookingData.refereePhone || null, referee_id: bookingData.refereeId || null,
+        signature_data: bookingData.signature || null
       }, { onConflict: 'id_number' }).select().single();
       
       if (customerError) throw customerError;
+
+      // 2. Upload Documents if they exist (only for new uploads)
+      let idFrontUrl = bookingData.isCloudClient ? bookingData.cloudIdFront : null;
+      let idBackUrl = bookingData.isCloudClient ? bookingData.cloudIdBack : null;
+      let dlFrontUrl = bookingData.isCloudClient ? bookingData.cloudDlFront : null;
+      let dlBackUrl = bookingData.isCloudClient ? bookingData.cloudDlBack : null;
+
+      if (!bookingData.isCloudClient) {
+        toast.loading("Uploading ID and DL documents...", { id: 'save-booking' });
+        const [upIdFront, upIdBack, upDlFront, upDlBack] = await Promise.all([
+          uploadDocument(bookingData.idFront, 'id_front', bookingData.idNumber),
+          uploadDocument(bookingData.idBack, 'id_back', bookingData.idNumber),
+          uploadDocument(bookingData.dlFront, 'dl_front', bookingData.idNumber),
+          uploadDocument(bookingData.dlBack, 'dl_back', bookingData.idNumber)
+        ]);
+        idFrontUrl = upIdFront;
+        idBackUrl = upIdBack;
+        dlFrontUrl = upDlFront;
+        dlBackUrl = upDlBack;
+
+        // Update customer with document URLs
+        await supabase.from('customers').update({
+          id_front_url: idFrontUrl,
+          id_back_url: idBackUrl,
+          dl_front_url: dlFrontUrl,
+          dl_back_url: dlBackUrl
+        }).eq('id', customerData.id);
+      }
+
+      toast.loading("Saving lease contract...", { id: 'save-booking' });
 
       const { error: leaseError } = await supabase.from('leases').insert({
         car_id: bookingData.carId, customer_id: customerData.id,
@@ -668,6 +724,16 @@ export default function BujatechAdmin() {
             <p className="text-xs font-medium text-slate-500">Daily Rate: KSh {selectedCarDetails?.rate?.toLocaleString()}</p>
           </div>
         </div>
+
+        {/* Referee Info (if provided) */}
+        {bookingData.refereeName && (
+          <div className="mb-8 p-4 bg-amber-50/50 border border-amber-200 rounded-lg">
+            <h3 className="font-black uppercase tracking-widest text-[9px] text-amber-500 mb-2">REFERRED BY</h3>
+            <p className="font-bold text-sm">{bookingData.refereeName}</p>
+            {bookingData.refereeId && <p className="text-xs font-medium text-slate-500">ID: {bookingData.refereeId}</p>}
+            {bookingData.refereePhone && <p className="text-xs font-medium text-slate-500">Phone: {bookingData.refereePhone}</p>}
+          </div>
+        )}
 
         {/* Table */}
         <table className="w-full mb-6">
@@ -1166,45 +1232,114 @@ export default function BujatechAdmin() {
             </div>
           ) : activeTab === 'analytics' ? (
             <div className="space-y-8">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-3xl border border-blue-500 shadow-xl shadow-blue-900/10 flex flex-col justify-center relative overflow-hidden">
-                  <div className="absolute -top-10 -right-10 p-6 opacity-10"><svg className="w-48 h-48 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg></div>
-                  <p className="text-[11px] font-black text-blue-200 uppercase tracking-widest mb-2 relative z-10">Total Revenue</p>
-                  <p className="text-4xl font-black text-white relative z-10">KSh {leasesList.reduce((acc, curr) => acc + (curr.total_cost || 0), 0).toLocaleString()}</p>
+              {/* Top Stats */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {/* Total Revenue */}
+                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-6 rounded-3xl border border-blue-500 shadow-xl shadow-blue-900/10 flex flex-col justify-center relative overflow-hidden">
+                  <p className="text-[10px] font-black text-blue-200 uppercase tracking-widest mb-1 relative z-10">Total Revenue</p>
+                  <p className="text-3xl font-black text-white relative z-10">KSh {leasesList.reduce((acc, curr) => acc + (curr.total_cost || 0), 0).toLocaleString()}</p>
                 </div>
-                <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50 flex flex-col justify-center">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg></div>
-                    <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Active Trips</p>
-                  </div>
-                  <p className="text-4xl font-black text-slate-900">{leasesList.filter(l => l.status === 'active').length}</p>
+                {/* Amount Collected */}
+                <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-6 rounded-3xl border border-emerald-400 shadow-xl shadow-emerald-900/10 flex flex-col justify-center relative overflow-hidden">
+                  <p className="text-[10px] font-black text-emerald-100 uppercase tracking-widest mb-1 relative z-10">Amount Collected</p>
+                  <p className="text-3xl font-black text-white relative z-10">KSh {leasesList.reduce((acc, curr) => acc + (curr.amount_paid || 0), 0).toLocaleString()}</p>
                 </div>
-                <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50 flex flex-col justify-center">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"/></svg></div>
-                    <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Fleet Utilization</p>
-                  </div>
-                  <p className="text-4xl font-black text-slate-900">{fleet.length > 0 ? Math.round((fleet.filter(c => c.status === 'rented').length / fleet.length) * 100) : 0}%</p>
-                  <div className="w-full bg-slate-100 h-2.5 rounded-full mt-4 overflow-hidden shadow-inner">
-                    <div className="bg-amber-500 h-full rounded-full" style={{ width: `${fleet.length > 0 ? Math.round((fleet.filter(c => c.status === 'rented').length / fleet.length) * 100) : 0}%` }}></div>
-                  </div>
+                {/* Outstanding Balance */}
+                <div className="bg-gradient-to-br from-rose-500 to-red-600 p-6 rounded-3xl border border-rose-400 shadow-xl shadow-rose-900/10 flex flex-col justify-center relative overflow-hidden">
+                  <p className="text-[10px] font-black text-rose-100 uppercase tracking-widest mb-1 relative z-10">Outstanding Balance</p>
+                  <p className="text-3xl font-black text-white relative z-10">KSh {leasesList.reduce((acc, curr) => acc + (curr.balance_due || 0), 0).toLocaleString()}</p>
+                </div>
+                {/* Fleet Utilization */}
+                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50 flex flex-col justify-center">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Fleet Utilization</p>
+                  <p className="text-3xl font-black text-slate-900">{fleet.length > 0 ? Math.round((fleet.filter(c => c.status === 'rented').length / fleet.length) * 100) : 0}%</p>
                 </div>
               </div>
-              <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50">
-                <h3 className="font-black text-xl text-slate-900 mb-6 flex items-center gap-3"><svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Recent Activity</h3>
-                <div className="space-y-4">
-                  {leasesList.slice(0, 5).map(lease => (
-                    <div key={lease.id} className="flex justify-between items-center border-b border-slate-100 pb-4 last:border-0 last:pb-0">
-                      <div>
-                        <p className="font-bold text-slate-900 text-sm">{lease.customers?.full_name}</p>
-                        <p className="text-xs text-slate-500 font-medium">{lease.cars?.make} {lease.cars?.model} ({lease.cars?.plate})</p>
-                      </div>
-                      <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest ${lease.status === 'active' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-600'}`}>{lease.status}</span>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Secondary Stats */}
+                <div className="lg:col-span-1 space-y-6">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 text-center">
+                      <p className="text-2xl font-black text-slate-800">{customersList.length}</p>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Total Clients</p>
                     </div>
-                  ))}
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 text-center">
+                      <p className="text-2xl font-black text-blue-600">{leasesList.filter(l => l.status === 'active').length}</p>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Active Trips</p>
+                    </div>
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 text-center">
+                      <p className="text-2xl font-black text-emerald-600">{leasesList.filter(l => l.status === 'completed').length}</p>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Completed</p>
+                    </div>
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 text-center">
+                      <p className="text-2xl font-black text-amber-600">{fleet.length}</p>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Total Cars</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50">
+                    <h3 className="font-black text-sm text-slate-900 mb-4 uppercase tracking-widest">Fleet Status</h3>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-500">Available</span>
+                        <span className="text-sm font-black text-emerald-600">{fleet.filter(c => c.status === 'available').length}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-500">Rented</span>
+                        <span className="text-sm font-black text-blue-600">{fleet.filter(c => c.status === 'rented').length}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-500">Maintenance</span>
+                        <span className="text-sm font-black text-amber-600">{fleet.filter(c => c.status === 'maintenance').length}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-2 space-y-6">
+                  <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50">
+                    <h3 className="font-black text-xl text-slate-900 mb-6 flex items-center gap-3"><svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>Top Earning Vehicles</h3>
+                    <div className="space-y-4">
+                      {fleet.map(car => {
+                        const carLeases = leasesList.filter(l => l.car_id === car.id);
+                        const totalEarned = carLeases.reduce((sum, l) => sum + (l.total_cost || 0), 0);
+                        return { ...car, totalEarned, tripCount: carLeases.length };
+                      }).sort((a, b) => b.totalEarned - a.totalEarned).slice(0, 5).map((car, index) => (
+                        <div key={car.id} className="flex justify-between items-center border-b border-slate-100 pb-3 last:border-0 last:pb-0">
+                          <div className="flex items-center gap-3">
+                            <span className="text-lg font-black text-slate-300">#{index + 1}</span>
+                            <div>
+                              <p className="font-bold text-slate-900 text-sm">{car.make} {car.model}</p>
+                              <p className="text-xs text-slate-500 font-medium">{car.plate} • {car.tripCount} trips</p>
+                            </div>
+                          </div>
+                          <span className="font-black text-emerald-600">KSh {car.totalEarned.toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50">
+                    <h3 className="font-black text-xl text-slate-900 mb-6 flex items-center gap-3"><svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Recent Activity</h3>
+                    <div className="space-y-4">
+                      {leasesList.slice(0, 5).map(lease => (
+                        <div key={lease.id} className="flex justify-between items-center border-b border-slate-100 pb-3 last:border-0 last:pb-0">
+                          <div>
+                            <p className="font-bold text-slate-900 text-sm">{lease.customers?.full_name}</p>
+                            <p className="text-xs text-slate-500 font-medium">{lease.cars?.make} {lease.cars?.model} ({lease.cars?.plate})</p>
+                          </div>
+                          <div className="text-right">
+                            <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest ${lease.status === 'active' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-600'}`}>{lease.status}</span>
+                            <p className="text-xs font-bold text-slate-900 mt-1">KSh {(lease.total_cost || 0).toLocaleString()}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
-              
+
               <div className="flex justify-end">
                 <button 
                   onClick={handleExportBackup} 
@@ -1398,14 +1533,29 @@ export default function BujatechAdmin() {
                       </select>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-5">
-                    <div>
+                  <div className="flex flex-col md:flex-row gap-5 items-end">
+                    <div className="flex-1 w-full">
                       <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Pickup Date & Time</label>
-                      <input type="datetime-local" required value={bookingData.pickupDate} onChange={e => setBookingData({...bookingData, pickupDate: e.target.value})} className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white"/>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                          <svg className="h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                        </div>
+                        <input type="datetime-local" required value={bookingData.pickupDate} onChange={e => setBookingData({...bookingData, pickupDate: e.target.value})} className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white shadow-sm hover:border-blue-300"/>
+                      </div>
                     </div>
-                    <div>
+
+                    <div className="hidden md:flex h-12 w-10 items-center justify-center text-slate-300">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                    </div>
+
+                    <div className="flex-1 w-full">
                       <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Return Date & Time</label>
-                      <input type="datetime-local" required value={bookingData.returnDate} onChange={e => setBookingData({...bookingData, returnDate: e.target.value})} className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white"/>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                          <svg className="h-5 w-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                        </div>
+                        <input type="datetime-local" required value={bookingData.returnDate} onChange={e => setBookingData({...bookingData, returnDate: e.target.value})} className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-indigo-400 transition bg-white shadow-sm hover:border-indigo-300"/>
+                      </div>
                     </div>
                   </div>
 
@@ -1505,7 +1655,28 @@ export default function BujatechAdmin() {
               </div>
 
               <div>
-                <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-3">5. Legal Digital Signature</h3>
+                <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-3">5. Referee / Referral Contact <span className="text-slate-300 font-bold normal-case">(Optional)</span></h3>
+                <div className="border-[1.5px] border-slate-200 rounded-xl p-5 shadow-sm space-y-5">
+                  <p className="text-xs font-medium text-slate-500">If this client was referred by someone, enter the referee&apos;s details below.</p>
+                  <div className="grid grid-cols-2 gap-5">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Referee Name</label>
+                      <input type="text" value={bookingData.refereeName} onChange={e => setBookingData({...bookingData, refereeName: e.target.value})} placeholder="e.g. James Mwangi" className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition placeholder:text-slate-400 placeholder:font-medium"/>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Referee Phone</label>
+                      <input type="tel" value={bookingData.refereePhone} onChange={e => setBookingData({...bookingData, refereePhone: e.target.value})} placeholder="07XX XXX XXX" className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition placeholder:text-slate-400 placeholder:font-medium"/>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Referee ID Number</label>
+                    <input type="text" value={bookingData.refereeId} onChange={e => setBookingData({...bookingData, refereeId: e.target.value})} placeholder="e.g. 30123456" className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition placeholder:text-slate-400 placeholder:font-medium"/>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-3">6. Legal Digital Signature</h3>
                 <div className="border-[1.5px] border-slate-200 rounded-xl p-5 shadow-sm">
                   <p className="text-xs font-medium text-slate-500 mb-4">I agree to the terms of the lease and accept liability for the vehicle during the selected period.</p>
                   <SignaturePad onSign={(data) => setBookingData({...bookingData, signature: data})} signatureData={bookingData.signature} />
@@ -1513,7 +1684,7 @@ export default function BujatechAdmin() {
               </div>
 
               <div className="pb-4">
-                <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-3">6. Secure Documents (Front & Back)</h3>
+                <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-3">7. Secure Documents (Front & Back)</h3>
                 <div className="border-[1.5px] border-slate-200 rounded-xl p-5 shadow-sm">
                   
                   {bookingData.isCloudClient ? (
@@ -1549,19 +1720,19 @@ export default function BujatechAdmin() {
                   ) : (
                     <div className="grid grid-cols-2 gap-4">
                       <label className={`border-[1.5px] border-dashed rounded-xl h-20 flex items-center justify-center cursor-pointer transition ${bookingData.idFront ? 'border-blue-400 text-blue-500 bg-blue-50/30' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
-                        <input type="file" className="hidden" onChange={(e) => { if(e.target.files) setBookingData({...bookingData, idFront: e.target.files[0]}) }} />
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { if(e.target.files) setBookingData({...bookingData, idFront: e.target.files[0]}) }} />
                         <span className="text-[10px] font-black uppercase tracking-widest">{bookingData.idFront ? '✓ ID (FRONT)' : 'ID (FRONT)'}</span>
                       </label>
                       <label className={`border-[1.5px] border-dashed rounded-xl h-20 flex items-center justify-center cursor-pointer transition ${bookingData.idBack ? 'border-blue-400 text-blue-500 bg-blue-50/30' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
-                        <input type="file" className="hidden" onChange={(e) => { if(e.target.files) setBookingData({...bookingData, idBack: e.target.files[0]}) }} />
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { if(e.target.files) setBookingData({...bookingData, idBack: e.target.files[0]}) }} />
                         <span className="text-[10px] font-black uppercase tracking-widest">{bookingData.idBack ? '✓ ID (BACK)' : 'ID (BACK)'}</span>
                       </label>
                       <label className={`border-[1.5px] border-dashed rounded-xl h-20 flex items-center justify-center cursor-pointer transition ${bookingData.dlFront ? 'border-blue-400 text-blue-500 bg-blue-50/30' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
-                        <input type="file" className="hidden" onChange={(e) => { if(e.target.files) setBookingData({...bookingData, dlFront: e.target.files[0]}) }} />
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { if(e.target.files) setBookingData({...bookingData, dlFront: e.target.files[0]}) }} />
                         <span className="text-[10px] font-black uppercase tracking-widest">{bookingData.dlFront ? '✓ DL (FRONT)' : 'DL (FRONT)'}</span>
                       </label>
                       <label className={`border-[1.5px] border-dashed rounded-xl h-20 flex items-center justify-center cursor-pointer transition ${bookingData.dlBack ? 'border-blue-400 text-blue-500 bg-blue-50/30' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
-                        <input type="file" className="hidden" onChange={(e) => { if(e.target.files) setBookingData({...bookingData, dlBack: e.target.files[0]}) }} />
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { if(e.target.files) setBookingData({...bookingData, dlBack: e.target.files[0]}) }} />
                         <span className="text-[10px] font-black uppercase tracking-widest">{bookingData.dlBack ? '✓ DL (BACK)' : 'DL (BACK)'}</span>
                       </label>
                     </div>
@@ -1697,14 +1868,52 @@ export default function BujatechAdmin() {
                     <div className="text-center py-10 text-slate-400 font-bold text-sm">No lease history found for this vehicle.</div>
                   ) : (
                     carLeaseHistory.map((lease: any) => (
-                      <div key={lease.id} className="border-[1.5px] border-slate-100 p-4 rounded-xl relative">
-                        <span className={`absolute top-4 right-4 text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${lease.status === 'active' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{lease.status}</span>
+                      <div key={lease.id} className="border-[1.5px] border-slate-100 p-5 rounded-xl relative hover:border-slate-200 transition">
+                        <span className={`absolute top-4 right-4 text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${lease.status === 'active' ? 'bg-blue-100 text-blue-700' : lease.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{lease.status}</span>
+                        
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Client</p>
-                        <p className="font-bold text-slate-900 mb-3">{lease.customers?.full_name}</p>
-                        <p className="text-xs font-bold text-blue-600 bg-blue-50 py-2 px-3 rounded-lg flex flex-col items-center justify-center text-center">
-                          <span className="text-[10px] text-blue-400 mb-0.5">Expected Return:</span>
-                          {new Date(lease.return_date).toLocaleDateString()}
-                        </p>
+                        <p className="font-bold text-slate-900">{lease.customers?.full_name}</p>
+                        {lease.customers?.phone && <p className="text-xs text-slate-500 font-medium mt-0.5">{lease.customers.phone}</p>}
+                        
+                        <div className="grid grid-cols-2 gap-4 mt-4">
+                          <div className="bg-blue-50 p-3 rounded-lg">
+                            <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-1">Pickup</p>
+                            <p className="text-xs font-bold text-blue-700">{new Date(lease.pickup_date).toLocaleDateString()}</p>
+                          </div>
+                          <div className="bg-slate-50 p-3 rounded-lg">
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Return</p>
+                            <p className="text-xs font-bold text-slate-700">{new Date(lease.return_date).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-3 gap-3 mt-3">
+                          <div className="bg-slate-50 rounded-lg p-3 text-center">
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total</p>
+                            <p className="text-sm font-black text-slate-800 mt-1">KSh {(lease.total_cost || 0).toLocaleString()}</p>
+                          </div>
+                          <div className="bg-emerald-50 rounded-lg p-3 text-center">
+                            <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Paid</p>
+                            <p className="text-sm font-black text-emerald-700 mt-1">KSh {(lease.amount_paid || 0).toLocaleString()}</p>
+                          </div>
+                          <div className="bg-red-50 rounded-lg p-3 text-center">
+                            <p className="text-[9px] font-black text-red-400 uppercase tracking-widest">Balance</p>
+                            <p className="text-sm font-black text-red-600 mt-1">KSh {(lease.balance_due || 0).toLocaleString()}</p>
+                          </div>
+                        </div>
+                        
+                        {lease.destination && (
+                          <div className="mt-3 pt-3 border-t border-slate-100">
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Destination</p>
+                            <p className="text-xs font-medium text-slate-600 mt-0.5">{lease.destination} {lease.purpose ? `· ${lease.purpose}` : ''}</p>
+                          </div>
+                        )}
+                        
+                        {lease.status === 'active' && new Date(lease.return_date) < new Date() && (
+                          <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-2.5 flex items-center gap-2">
+                            <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                            <p className="text-[10px] font-bold text-red-600">OVERDUE — Was due {new Date(lease.return_date).toLocaleDateString()}</p>
+                          </div>
+                        )}
                       </div>
                     ))
                   )}
