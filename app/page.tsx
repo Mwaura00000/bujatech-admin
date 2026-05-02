@@ -584,6 +584,45 @@ export default function BujatechAdmin() {
     }
   };
 
+  const handleExportBackup = async () => {
+    toast.loading("Exporting data...", { id: 'export' });
+    try {
+      const [carsRes, customersRes, leasesRes, maintRes] = await Promise.all([
+        supabase.from('cars').select('*'),
+        supabase.from('customers').select('*'),
+        supabase.from('leases').select('*'),
+        supabase.from('maintenance_logs').select('*')
+      ]);
+
+      const backup = {
+        exportedAt: new Date().toISOString(),
+        exportedBy: userEmail,
+        data: {
+          cars: carsRes.data || [],
+          customers: customersRes.data || [],
+          leases: leasesRes.data || [],
+          maintenance_logs: maintRes.data || []
+        }
+      };
+
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bujatech_backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast.dismiss('export');
+      toast.success(`Backup exported! ${(carsRes.data?.length || 0)} cars, ${(customersRes.data?.length || 0)} customers, ${(leasesRes.data?.length || 0)} leases.`);
+    } catch (e) {
+      toast.dismiss('export');
+      toast.error("Failed to export backup.");
+    }
+  };
+
   // Auth gate — show loading while checking session
   if (!authChecked) {
     return (
@@ -1164,6 +1203,16 @@ export default function BujatechAdmin() {
                     </div>
                   ))}
                 </div>
+              </div>
+              
+              <div className="flex justify-end">
+                <button 
+                  onClick={handleExportBackup} 
+                  className="bg-slate-800 text-white font-bold py-3 px-6 rounded-xl hover:bg-black transition flex items-center gap-2 shadow-md"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                  Export Database Backup
+                </button>
               </div>
             </div>
           ) : activeTab === 'notifications' ? (
