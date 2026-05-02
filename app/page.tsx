@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Toaster, toast } from 'sonner';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
+import DatePicker from 'react-datepicker';
+import "react-datepicker/dist/react-datepicker.css";
 import { supabase } from '../lib/supabase';
 import { Car } from '../types';
 
@@ -99,7 +101,7 @@ export default function BujatechAdmin() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'fleet' | 'leases' | 'customers' | 'analytics' | 'notifications'>('fleet');
+  const [activeTab, setActiveTab] = useState<'fleet' | 'leases' | 'customers' | 'analytics' | 'notifications' | 'timeline' | 'tracking'>('fleet');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [fleet, setFleet] = useState<Car[]>([]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -143,7 +145,7 @@ export default function BujatechAdmin() {
     cloudIdBack: null as string | null,
     cloudDlFront: null as string | null,
     cloudDlBack: null as string | null,
-    carId: '', destination: '', purpose: 'Personal / Leisure', pickupDate: '', returnDate: '', amountPaid: '', paymentMethod: 'M-Pesa (Direct)',
+    carId: '', destination: '', purpose: 'Personal / Leisure', pickupDate: null as Date | null, returnDate: null as Date | null, amountPaid: '', paymentMethod: 'M-Pesa (Direct)',
     customerName: '', phone: '', idNumber: '', altName: '', altPhone: '', altId: '', altRelationship: '', signature: '',
     refereeName: '', refereePhone: '', refereeId: '',
     idFront: null as File | null, idBack: null as File | null, dlFront: null as File | null, dlBack: null as File | null
@@ -245,8 +247,8 @@ export default function BujatechAdmin() {
   
   let billedDays = 0; let totalCost = 0; let balanceDue = 0;
   if (bookingData.pickupDate && bookingData.returnDate && selectedCarDetails) {
-    const pickupTime = new Date(bookingData.pickupDate).getTime();
-    const returnTime = new Date(bookingData.returnDate).getTime();
+    const pickupTime = (bookingData.pickupDate as Date).getTime();
+    const returnTime = (bookingData.returnDate as Date).getTime();
     if (returnTime > pickupTime) {
       const diffInHours = (returnTime - pickupTime) / (1000 * 60 * 60);
       billedDays = Math.ceil(diffInHours / 24);
@@ -410,7 +412,7 @@ export default function BujatechAdmin() {
 
       const { error: leaseError } = await supabase.from('leases').insert({
         car_id: bookingData.carId, customer_id: customerData.id,
-        pickup_date: new Date(bookingData.pickupDate).toISOString(), return_date: new Date(bookingData.returnDate).toISOString(),
+        pickup_date: (bookingData.pickupDate as Date).toISOString(), return_date: (bookingData.returnDate as Date).toISOString(),
         destination: bookingData.destination, purpose: bookingData.purpose, total_cost: totalCost, 
         amount_paid: Number(bookingData.amountPaid) || 0, balance_due: balanceDue,
         payment_method: bookingData.paymentMethod, status: 'active'
@@ -929,6 +931,14 @@ export default function BujatechAdmin() {
             {!isSidebarCollapsed && <span>Customers</span>}
           </button>
           <div className="pt-4 mt-4 border-t border-slate-800/50"></div>
+          <button onClick={() => setActiveTab('timeline')} className={`w-full flex items-center p-3 rounded-xl font-bold transition group ${isSidebarCollapsed ? 'justify-center' : 'gap-3'} ${activeTab === 'timeline' ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'}`} title="Schedule">
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            {!isSidebarCollapsed && <span>Schedule</span>}
+          </button>
+          <button onClick={() => setActiveTab('tracking')} className={`w-full flex items-center p-3 rounded-xl font-bold transition group ${isSidebarCollapsed ? 'justify-center' : 'gap-3'} ${activeTab === 'tracking' ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'}`} title="Live Tracking">
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            {!isSidebarCollapsed && <span>Live Tracking</span>}
+          </button>
           <button onClick={() => setActiveTab('analytics')} className={`w-full flex items-center p-3 rounded-xl font-bold transition group ${isSidebarCollapsed ? 'justify-center' : 'gap-3'} ${activeTab === 'analytics' ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'}`} title="Analytics">
             <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
             {!isSidebarCollapsed && <span>Analytics</span>}
@@ -1386,20 +1396,157 @@ export default function BujatechAdmin() {
                 )}
               </div>
             </div>
+          ) : activeTab === 'timeline' ? (
+            <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50 overflow-x-auto">
+              <h3 className="font-black text-xl text-slate-900 mb-6 flex items-center gap-3"><svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>Fleet Schedule (Next 14 Days)</h3>
+              <div className="min-w-[800px]">
+                <div className="flex border-b border-slate-200 pb-2 mb-2">
+                  <div className="w-48 flex-shrink-0 font-bold text-sm text-slate-500">Vehicle</div>
+                  <div className="flex-1 flex">
+                    {Array.from({ length: 14 }).map((_, i) => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + i);
+                      return (
+                        <div key={i} className="flex-1 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                          {d.toLocaleDateString('en-US', { weekday: 'short' })}<br/>{d.getDate()}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                {fleet.map(car => (
+                  <div key={car.id} className="flex border-b border-slate-100 py-3 items-center relative">
+                    <div className="w-48 flex-shrink-0 z-10 bg-white">
+                      <p className="font-bold text-slate-900 text-sm">{car.make} {car.model}</p>
+                      <p className="text-[10px] text-slate-400 font-bold tracking-widest">{car.plate}</p>
+                    </div>
+                    <div className="flex-1 flex h-10 bg-slate-50 rounded-lg relative overflow-hidden">
+                      {Array.from({ length: 14 }).map((_, i) => (
+                        <div key={i} className="flex-1 border-r border-slate-200/50 last:border-0"></div>
+                      ))}
+                      {leasesList.filter(l => l.car_id === car.id && (l.status === 'active' || l.status === 'upcoming')).map(lease => {
+                        const today = new Date();
+                        today.setHours(0,0,0,0);
+                        const pickup = new Date(lease.pickup_date);
+                        const returnDate = new Date(lease.return_date);
+                        const startDiff = Math.max(0, Math.floor((pickup.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
+                        const endDiff = Math.floor((returnDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                        
+                        if (endDiff < 0 || startDiff >= 14) return null;
+                        
+                        const left = `${(startDiff / 14) * 100}%`;
+                        const width = `${(Math.min(14 - startDiff, endDiff - startDiff + 1) / 14) * 100}%`;
+                        
+                        return (
+                          <div key={lease.id} className="absolute top-1 bottom-1 rounded-md bg-blue-500 shadow-sm border border-blue-600 flex items-center justify-center overflow-hidden z-20" style={{ left, width }}>
+                            <span className="text-[9px] font-bold text-white truncate px-1">{lease.customers?.full_name}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : activeTab === 'tracking' ? (
+            <div className="space-y-6">
+              <div className="flex justify-between items-end">
+                <div>
+                  <h3 className="font-black text-2xl text-slate-900">Live Fleet Tracking</h3>
+                  <p className="text-slate-500 font-medium text-sm mt-1">Powered by Protracker API</p>
+                </div>
+                <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="text-xs font-bold uppercase tracking-widest">Live Sync Active</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[600px]">
+                {/* Mock Map View */}
+                <div className="lg:col-span-2 bg-slate-200 rounded-3xl border border-slate-300 relative overflow-hidden shadow-inner flex items-center justify-center group">
+                  <div className="absolute inset-0 bg-[url('https://maps.googleapis.com/maps/api/staticmap?center=-1.286389,36.817223&zoom=13&size=800x600&scale=2&maptype=roadmap&style=feature:poi|visibility:off&style=feature:transit|visibility:off')] bg-cover bg-center opacity-50 grayscale transition duration-1000 group-hover:grayscale-0"></div>
+                  <div className="absolute inset-0 bg-blue-900/10 backdrop-blur-[1px]"></div>
+                  
+                  {/* Mock animated car markers */}
+                  <div className="absolute top-[40%] left-[30%]">
+                    <div className="w-8 h-8 bg-blue-600 rounded-full border-2 border-white shadow-lg flex items-center justify-center animate-bounce">
+                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    </div>
+                    <div className="mt-1 bg-white px-2 py-1 rounded shadow text-[10px] font-black whitespace-nowrap">KDA 123X • 45 km/h</div>
+                  </div>
+                  
+                  <div className="absolute top-[60%] left-[65%]">
+                    <div className="w-8 h-8 bg-amber-500 rounded-full border-2 border-white shadow-lg flex items-center justify-center">
+                      <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                    </div>
+                    <div className="mt-1 bg-white px-2 py-1 rounded shadow text-[10px] font-black whitespace-nowrap">KCD 456Y • Parked</div>
+                  </div>
+
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/60 backdrop-blur-sm z-10 opacity-0 hover:opacity-100 transition-opacity duration-300">
+                    <div className="bg-white p-6 rounded-2xl shadow-xl text-center max-w-sm">
+                      <svg className="w-12 h-12 text-blue-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                      <h4 className="font-black text-lg text-slate-900 mb-2">Protracker Credentials Needed</h4>
+                      <p className="text-sm text-slate-500 mb-4 font-medium">To replace this mock map with actual live tracking data, we need your Protrack API token.</p>
+                      <p className="text-[10px] font-bold text-slate-400 bg-slate-50 p-2 rounded">Awaiting API keys setup...</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sidebar Vehicle List */}
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50 p-6 flex flex-col">
+                  <h3 className="font-black text-sm text-slate-900 mb-4 uppercase tracking-widest border-b border-slate-100 pb-2">Active Trackers</h3>
+                  <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+                    {fleet.filter(c => c.status === 'rented').map(car => (
+                      <div key={car.id} className="p-3 border border-slate-200 rounded-xl hover:border-blue-400 transition cursor-pointer">
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <p className="font-bold text-sm text-slate-900">{car.plate}</p>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{car.make} {car.model}</p>
+                          </div>
+                          <span className="flex h-2 w-2 relative">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 mt-3">
+                          <div className="bg-slate-50 rounded p-1.5 text-center">
+                            <p className="text-[8px] font-bold text-slate-400 uppercase">Speed</p>
+                            <p className="text-xs font-black text-slate-700">{Math.floor(Math.random() * 60)} km/h</p>
+                          </div>
+                          <div className="bg-slate-50 rounded p-1.5 text-center">
+                            <p className="text-[8px] font-bold text-slate-400 uppercase">Status</p>
+                            <p className="text-xs font-black text-emerald-600">Moving</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {fleet.filter(c => c.status === 'rented').length === 0 && (
+                      <div className="text-center py-10 text-slate-400 font-bold text-sm">No vehicles currently on the road.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : null}
         </div>
       </main>
 
       {/* --- MOBILE BOTTOM NAV --- */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100 z-50 flex justify-around items-center shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] pb-safe">
-        <button onClick={() => setActiveTab('fleet')} className={`flex flex-col items-center justify-center w-full py-3 transition ${activeTab === 'fleet' ? 'text-blue-600' : 'text-slate-400'}`}>
-          <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg> <span className="text-[10px] font-bold uppercase tracking-wider">Fleet</span>
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100 z-50 flex justify-around items-center shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] pb-safe px-1">
+        <button onClick={() => setActiveTab('fleet')} className={`flex flex-col items-center justify-center w-full py-2 transition ${activeTab === 'fleet' ? 'text-blue-600' : 'text-slate-400'}`}>
+          <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg> <span className="text-[9px] font-bold uppercase tracking-wider">Fleet</span>
         </button>
-        <button onClick={() => setActiveTab('leases')} className={`flex flex-col items-center justify-center w-full py-3 transition ${activeTab === 'leases' ? 'text-blue-600' : 'text-slate-400'}`}>
-          <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg> <span className="text-[10px] font-bold uppercase tracking-wider">Leases</span>
+        <button onClick={() => setActiveTab('timeline')} className={`flex flex-col items-center justify-center w-full py-2 transition ${activeTab === 'timeline' ? 'text-blue-600' : 'text-slate-400'}`}>
+          <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg> <span className="text-[9px] font-bold uppercase tracking-wider">Plan</span>
         </button>
-        <button onClick={() => setActiveTab('customers')} className={`flex flex-col items-center justify-center w-full py-3 transition ${activeTab === 'customers' ? 'text-blue-600' : 'text-slate-400'}`}>
-          <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg> <span className="text-[10px] font-bold uppercase tracking-wider">Clients</span>
+        <button onClick={() => setActiveTab('tracking')} className={`flex flex-col items-center justify-center w-full py-2 transition ${activeTab === 'tracking' ? 'text-blue-600' : 'text-slate-400'}`}>
+          <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg> <span className="text-[9px] font-bold uppercase tracking-wider">Track</span>
+        </button>
+        <button onClick={() => setActiveTab('leases')} className={`flex flex-col items-center justify-center w-full py-2 transition ${activeTab === 'leases' ? 'text-blue-600' : 'text-slate-400'}`}>
+          <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg> <span className="text-[9px] font-bold uppercase tracking-wider">Leases</span>
+        </button>
+        <button onClick={() => setActiveTab('customers')} className={`flex flex-col items-center justify-center w-full py-2 transition ${activeTab === 'customers' ? 'text-blue-600' : 'text-slate-400'}`}>
+          <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg> <span className="text-[9px] font-bold uppercase tracking-wider">Clients</span>
         </button>
       </div>
 
@@ -1537,10 +1684,21 @@ export default function BujatechAdmin() {
                     <div className="flex-1 w-full">
                       <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Pickup Date & Time</label>
                       <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
                           <svg className="h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                         </div>
-                        <input type="datetime-local" required value={bookingData.pickupDate} onChange={e => setBookingData({...bookingData, pickupDate: e.target.value})} className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white shadow-sm hover:border-blue-300"/>
+                        <DatePicker 
+                          selected={bookingData.pickupDate} 
+                          onChange={(date: Date | null) => setBookingData({...bookingData, pickupDate: date})} 
+                          showTimeSelect 
+                          timeFormat="HH:mm" 
+                          timeIntervals={30} 
+                          timeCaption="Time" 
+                          dateFormat="MMMM d, yyyy h:mm aa" 
+                          className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white shadow-sm hover:border-blue-300" 
+                          placeholderText="Select pickup date"
+                          wrapperClassName="w-full"
+                        />
                       </div>
                     </div>
 
@@ -1551,10 +1709,21 @@ export default function BujatechAdmin() {
                     <div className="flex-1 w-full">
                       <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Return Date & Time</label>
                       <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
                           <svg className="h-5 w-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                         </div>
-                        <input type="datetime-local" required value={bookingData.returnDate} onChange={e => setBookingData({...bookingData, returnDate: e.target.value})} className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-indigo-400 transition bg-white shadow-sm hover:border-indigo-300"/>
+                        <DatePicker 
+                          selected={bookingData.returnDate} 
+                          onChange={(date: Date | null) => setBookingData({...bookingData, returnDate: date})} 
+                          showTimeSelect 
+                          timeFormat="HH:mm" 
+                          timeIntervals={30} 
+                          timeCaption="Time" 
+                          dateFormat="MMMM d, yyyy h:mm aa" 
+                          className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-indigo-400 transition bg-white shadow-sm hover:border-indigo-300" 
+                          placeholderText="Select return date"
+                          wrapperClassName="w-full"
+                        />
                       </div>
                     </div>
                   </div>
