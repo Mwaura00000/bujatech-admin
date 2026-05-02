@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Toaster, toast } from 'sonner';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
@@ -95,6 +96,9 @@ const SignaturePad = ({ onSign, signatureData }: { onSign: (data: string) => voi
 };
 
 export default function BujatechAdmin() {
+  const router = useRouter();
+  const [authChecked, setAuthChecked] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'fleet' | 'leases' | 'customers' | 'analytics' | 'notifications'>('fleet');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [fleet, setFleet] = useState<Car[]>([]);
@@ -174,7 +178,34 @@ export default function BujatechAdmin() {
     setIsLoading(false);
   };
 
-  useEffect(() => { setIsMounted(true); fetchCars(); }, []);
+  useEffect(() => {
+    setIsMounted(true);
+    // Check auth session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        router.replace('/login');
+      } else {
+        setUserEmail(session.user.email || null);
+        setAuthChecked(true);
+        fetchCars();
+      }
+    });
+    // Listen for auth changes (sign out, token refresh, etc.)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        router.replace('/login');
+      } else {
+        setUserEmail(session.user.email || null);
+      }
+    });
+    return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    router.replace('/login');
+  };
 
   // Auto-download amendment PDF when amendmentData is set
   useEffect(() => {
@@ -553,6 +584,18 @@ export default function BujatechAdmin() {
     }
   };
 
+  // Auth gate — show loading while checking session
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-[#0B1120] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-slate-500 text-sm font-bold">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans relative overflow-x-hidden">
       <Toaster position="top-center" richColors />
@@ -794,14 +837,20 @@ export default function BujatechAdmin() {
           </button>
         </nav>
         
-        <div className={`p-6 border-t border-slate-800/50 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-          <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center font-bold text-sm shadow-inner flex-shrink-0">AD</div>
-          {!isSidebarCollapsed && (
-            <div>
-              <p className="font-bold text-sm">Admin User</p>
-              <p className="text-[10px] text-emerald-400 font-bold tracking-widest uppercase mt-0.5 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span> Online</p>
-            </div>
-          )}
+        <div className={`p-4 border-t border-slate-800/50 space-y-3`}>
+          <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+            <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center font-bold text-sm shadow-lg shadow-blue-500/20 flex-shrink-0">{userEmail ? userEmail.charAt(0).toUpperCase() : 'A'}</div>
+            {!isSidebarCollapsed && (
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-sm truncate">{userEmail || 'Admin'}</p>
+                <p className="text-[10px] text-emerald-400 font-bold tracking-widest uppercase mt-0.5 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span> Online</p>
+              </div>
+            )}
+          </div>
+          <button onClick={handleSignOut} className={`w-full flex items-center p-2.5 rounded-xl font-bold text-sm text-red-400 hover:bg-red-500/10 transition ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`} title="Sign Out">
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+            {!isSidebarCollapsed && <span>Sign Out</span>}
+          </button>
         </div>
       </aside>
 
