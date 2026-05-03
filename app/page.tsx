@@ -118,6 +118,7 @@ export default function BujatechAdmin() {
   const [newBaseRate, setNewBaseRate] = useState('');
   const [isUpdatingBaseRate, setIsUpdatingBaseRate] = useState(false);
   const [selectedCar, setSelectedCar] = useState<Car | null>(null);
+  const [vehicleDossierTab, setVehicleDossierTab] = useState<'status' | 'leases' | 'maint'>('status');
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
   const [amendmentData, setAmendmentData] = useState<any>(null);
   
