@@ -108,25 +108,17 @@ export default function BujatechAdmin() {
   const [customersList, setCustomersList] = useState<any[]>([]); 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [leasesList, setLeasesList] = useState<any[]>([]);
+  const [carMaintenanceLogs, setCarMaintenanceLogs] = useState<any[]>([]);
+  const [carLeaseHistory, setCarLeaseHistory] = useState<any[]>([]);
+  const [extendingLeaseId, setExtendingLeaseId] = useState<string | null>(null);
+  const [extendLeaseDate, setExtendLeaseDate] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isMounted, setIsMounted] = useState(false);
-  
-  // Vehicle Dossier State
-  const [selectedCar, setSelectedCar] = useState<Car | null>(null);
-  const [vehicleDossierTab, setVehicleDossierTab] = useState<'status' | 'leases' | 'maint'>('status');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [carMaintenanceLogs, setCarMaintenanceLogs] = useState<any[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [carLeaseHistory, setCarLeaseHistory] = useState<any[]>([]);
-  const [isUpdatingBaseRate, setIsUpdatingBaseRate] = useState(false);
   const [newBaseRate, setNewBaseRate] = useState('');
-  
-  const [extendingLeaseId, setExtendingLeaseId] = useState<string | null>(null);
-  const [extendLeaseDate, setExtendLeaseDate] = useState<string>('');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [isUpdatingBaseRate, setIsUpdatingBaseRate] = useState(false);
+  const [selectedCar, setSelectedCar] = useState<Car | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
   const [amendmentData, setAmendmentData] = useState<any>(null);
   
   // Maint Form
@@ -138,6 +130,11 @@ export default function BujatechAdmin() {
 
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  const [pickupTime, setPickupTime] = useState('10:00');
+  const [returnTime, setReturnTime] = useState('10:00');
+  const [selectedMobileCarId, setSelectedMobileCarId] = useState<string>('');
+  const [trackingUrl, setTrackingUrl] = useState<string>('https://www.protrack365.com');
   
   const [bookingData, setBookingData] = useState({
     isCloudClient: false,
@@ -939,6 +936,7 @@ export default function BujatechAdmin() {
             <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
             {!isSidebarCollapsed && <span>Live Tracking</span>}
           </button>
+
           <button onClick={() => setActiveTab('analytics')} className={`w-full flex items-center p-3 rounded-xl font-bold transition group ${isSidebarCollapsed ? 'justify-center' : 'gap-3'} ${activeTab === 'analytics' ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'}`} title="Analytics">
             <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
             {!isSidebarCollapsed && <span>Analytics</span>}
@@ -1397,134 +1395,191 @@ export default function BujatechAdmin() {
               </div>
             </div>
           ) : activeTab === 'timeline' ? (
-            <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50 overflow-x-auto">
-              <h3 className="font-black text-xl text-slate-900 mb-6 flex items-center gap-3"><svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>Fleet Schedule (Next 14 Days)</h3>
-              <div className="min-w-[800px]">
-                <div className="flex border-b border-slate-200 pb-2 mb-2">
-                  <div className="w-48 flex-shrink-0 font-bold text-sm text-slate-500">Vehicle</div>
-                  <div className="flex-1 flex">
-                    {Array.from({ length: 14 }).map((_, i) => {
-                      const d = new Date();
-                      d.setDate(d.getDate() + i);
-                      return (
-                        <div key={i} className="flex-1 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                          {d.toLocaleDateString('en-US', { weekday: 'short' })}<br/>{d.getDate()}
-                        </div>
-                      );
-                    })}
+            <div className="space-y-6">
+              {/* Desktop Only Gantt Schedule */}
+              <div className="hidden md:block bg-white p-6 lg:p-8 rounded-3xl border border-slate-200 shadow-xl shadow-slate-100/50 overflow-x-auto">
+                <div className="flex justify-between items-center mb-8">
+                  <div>
+                    <h3 className="font-black text-2xl text-slate-900 flex items-center gap-3">
+                      <svg className="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                      Fleet Schedule
+                    </h3>
+                    <p className="text-xs font-medium text-slate-500 mt-1">Advanced 14-day booking timeline and lease allocations</p>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                      <span className="w-3.5 h-3.5 bg-gradient-to-r from-blue-500 to-indigo-600 rounded shadow-sm"></span> Active Lease
+                    </div>
                   </div>
                 </div>
-                {fleet.map(car => (
-                  <div key={car.id} className="flex border-b border-slate-100 py-3 items-center relative">
-                    <div className="w-48 flex-shrink-0 z-10 bg-white">
-                      <p className="font-bold text-slate-900 text-sm">{car.make} {car.model}</p>
-                      <p className="text-[10px] text-slate-400 font-bold tracking-widest">{car.plate}</p>
-                    </div>
-                    <div className="flex-1 flex h-10 bg-slate-50 rounded-lg relative overflow-hidden">
-                      {Array.from({ length: 14 }).map((_, i) => (
-                        <div key={i} className="flex-1 border-r border-slate-200/50 last:border-0"></div>
-                      ))}
-                      {leasesList.filter(l => l.car_id === car.id && (l.status === 'active' || l.status === 'upcoming')).map(lease => {
-                        const today = new Date();
-                        today.setHours(0,0,0,0);
-                        const pickup = new Date(lease.pickup_date);
-                        const returnDate = new Date(lease.return_date);
-                        const startDiff = Math.max(0, Math.floor((pickup.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
-                        const endDiff = Math.floor((returnDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                        
-                        if (endDiff < 0 || startDiff >= 14) return null;
-                        
-                        const left = `${(startDiff / 14) * 100}%`;
-                        const width = `${(Math.min(14 - startDiff, endDiff - startDiff + 1) / 14) * 100}%`;
-                        
+
+                <div className="min-w-[850px] space-y-2">
+                  <div className="flex border-b border-slate-200/80 pb-4 mb-4 select-none">
+                    <div className="w-64 flex-shrink-0 font-black text-[11px] uppercase tracking-widest text-slate-400 pl-2">Vehicle Allocation</div>
+                    <div className="flex-1 flex gap-1">
+                      {Array.from({ length: 14 }).map((_, i) => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + i);
                         return (
-                          <div key={lease.id} className="absolute top-1 bottom-1 rounded-md bg-blue-500 shadow-sm border border-blue-600 flex items-center justify-center overflow-hidden z-20" style={{ left, width }}>
-                            <span className="text-[9px] font-bold text-white truncate px-1">{lease.customers?.full_name}</span>
+                          <div key={i} className={`flex-1 text-center py-2 rounded-xl border transition-all ${i === 0 ? 'bg-blue-50/50 border-blue-200/60 font-black' : 'border-transparent'}`}>
+                            <div className={`text-[10px] font-bold uppercase tracking-wide ${i === 0 ? 'text-blue-600' : 'text-slate-400'}`}>
+                              {d.toLocaleDateString('en-US', { weekday: 'short' })}
+                            </div>
+                            <div className={`text-sm font-black mt-0.5 ${i === 0 ? 'text-blue-700' : 'text-slate-700'}`}>
+                              {d.getDate()}
+                            </div>
                           </div>
                         );
                       })}
                     </div>
                   </div>
-                ))}
+
+                  <div className="space-y-4">
+                    {fleet.map((car, index) => {
+                      const isAvailable = car.status === 'available';
+                      const isRented = car.status === 'rented';
+                      const isMaintenance = car.status === 'maintenance';
+
+                      return (
+                        <div key={car.id} className={`flex p-3 rounded-2xl border transition-all hover:bg-slate-50/50 hover:shadow-sm hover:border-slate-300/80 items-center relative ${index % 2 === 0 ? 'bg-white border-slate-100/80' : 'bg-slate-50/20 border-slate-100/60'}`}>
+                          <div className="w-64 flex-shrink-0 z-10 pr-4">
+                            <p className="font-black text-slate-900 text-sm tracking-tight leading-snug">{car.make} {car.model}</p>
+                            <div className="flex items-center gap-1.5 mt-1.5">
+                              <span className="text-[10px] bg-slate-100 border border-slate-200 font-bold tracking-wider px-2 py-0.5 rounded text-slate-600">
+                                {car.plate}
+                              </span>
+                              <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${isAvailable ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : isRented ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-red-50 text-red-600 border border-red-100'}`}>
+                                {car.status}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex-1 flex h-11 bg-slate-50/60 border border-slate-100 rounded-2xl relative overflow-hidden p-1 gap-1">
+                            {Array.from({ length: 14 }).map((_, i) => (
+                              <div key={i} className="flex-1 border-r border-slate-100/40 last:border-0 rounded"></div>
+                            ))}
+                            {leasesList.filter(l => l.car_id === car.id && (l.status === 'active' || l.status === 'upcoming')).map(lease => {
+                              const today = new Date();
+                              today.setHours(0,0,0,0);
+                              const pickup = new Date(lease.pickup_date);
+                              const returnDate = new Date(lease.return_date);
+                              const startDiff = Math.max(0, Math.floor((pickup.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
+                              const endDiff = Math.floor((returnDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                              
+                              if (endDiff < 0 || startDiff >= 14) return null;
+                              
+                              const left = `${(startDiff / 14) * 100}%`;
+                              const width = `${(Math.min(14 - startDiff, endDiff - startDiff + 1) / 14) * 100}%`;
+                              
+                              return (
+                                <div 
+                                  key={lease.id} 
+                                  className="absolute top-1 bottom-1 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 shadow-md shadow-blue-500/20 border border-blue-400 hover:brightness-110 flex items-center px-3 z-20 cursor-pointer group/item transition-all duration-300" 
+                                  style={{ left, width }}
+                                >
+                                  <span className="text-[10px] font-black text-white tracking-wide truncate w-full select-none">
+                                    {lease.customers?.full_name}
+                                  </span>
+                                  <div className="absolute opacity-0 group-hover/item:opacity-100 bg-slate-900/90 backdrop-blur-md text-white text-[10px] font-bold p-3 rounded-xl shadow-xl border border-slate-700/80 -top-12 left-1/2 -translate-x-1/2 z-30 transition pointer-events-none whitespace-nowrap">
+                                    {lease.customers?.full_name} ({new Date(lease.pickup_date).toLocaleDateString()} - {new Date(lease.return_date).toLocaleDateString()})
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Mobile Alternative Layout */}
+              <div className="block md:hidden bg-white p-5 rounded-3xl border border-slate-200 shadow-xl shadow-slate-100/50 space-y-5">
+                <div>
+                  <h3 className="font-black text-xl text-slate-900 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    Mobile Schedule Grid
+                  </h3>
+                  <p className="text-[10px] font-medium text-slate-400 mt-0.5 tracking-wide">Perfect vertical schedule for phones</p>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Select Vehicle to view schedule</label>
+                  <select 
+                    value={selectedMobileCarId || (fleet[0]?.id || '')}
+                    onChange={(e) => setSelectedMobileCarId(e.target.value)}
+                    className="w-full p-3 border-[1.5px] border-slate-200 rounded-xl text-sm font-bold text-slate-800 outline-none bg-white transition focus:border-blue-400 shadow-sm"
+                  >
+                    <option value="" disabled>Select vehicle...</option>
+                    {fleet.map(car => (
+                      <option key={car.id} value={car.id}>{car.make} {car.model} ({car.plate})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {fleet.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2 mt-4 select-none">
+                    {Array.from({ length: 14 }).map((_, i) => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + i);
+                      
+                      const selectedCarId = selectedMobileCarId || fleet[0]?.id;
+                      const activeLease = leasesList.find(l => l.car_id === selectedCarId && (l.status === 'active' || l.status === 'upcoming') && (
+                        new Date(l.pickup_date) <= d && new Date(l.return_date) >= d
+                      ));
+
+                      return (
+                        <div key={i} className={`p-3 rounded-2xl border flex flex-col justify-between h-24 transition-all duration-200 ${activeLease ? 'bg-blue-50/50 border-blue-200' : 'bg-slate-50/30 border-slate-100/80'}`}>
+                          <div className="flex justify-between items-start">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                              {d.toLocaleDateString('en-US', { weekday: 'short' })}
+                            </span>
+                            <span className={`text-[8px] font-black tracking-wider px-1.5 py-0.5 rounded-md uppercase ${activeLease ? 'bg-blue-600 text-white' : 'bg-emerald-100 text-emerald-700 border border-emerald-200/60'}`}>
+                              {activeLease ? 'Rented' : 'Free'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-xl font-black text-slate-800 tracking-tight leading-none block">{d.getDate()}</span>
+                            <span className="text-[10px] font-bold text-slate-500 mt-0.5 tracking-tight block truncate">
+                              {activeLease ? activeLease.customers?.full_name : 'No Allocation'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           ) : activeTab === 'tracking' ? (
-            <div className="space-y-6">
-              <div className="flex justify-between items-end">
-                <div>
-                  <h3 className="font-black text-2xl text-slate-900">Live Fleet Tracking</h3>
-                  <p className="text-slate-500 font-medium text-sm mt-1">Powered by Protracker API</p>
-                </div>
-                <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span className="text-xs font-bold uppercase tracking-widest">Live Sync Active</span>
-                </div>
+            <div className="bg-white p-6 lg:p-8 rounded-3xl border border-slate-200 shadow-xl shadow-slate-100/50 max-w-xl mx-auto text-center space-y-6">
+              <div className="w-16 h-16 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-center mx-auto text-blue-600 shadow-sm animate-pulse">
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
               </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[600px]">
-                {/* Mock Map View */}
-                <div className="lg:col-span-2 bg-slate-200 rounded-3xl border border-slate-300 relative overflow-hidden shadow-inner flex items-center justify-center group">
-                  <div className="absolute inset-0 bg-[url('https://maps.googleapis.com/maps/api/staticmap?center=-1.286389,36.817223&zoom=13&size=800x600&scale=2&maptype=roadmap&style=feature:poi|visibility:off&style=feature:transit|visibility:off')] bg-cover bg-center opacity-50 grayscale transition duration-1000 group-hover:grayscale-0"></div>
-                  <div className="absolute inset-0 bg-blue-900/10 backdrop-blur-[1px]"></div>
-                  
-                  {/* Mock animated car markers */}
-                  <div className="absolute top-[40%] left-[30%]">
-                    <div className="w-8 h-8 bg-blue-600 rounded-full border-2 border-white shadow-lg flex items-center justify-center animate-bounce">
-                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                    </div>
-                    <div className="mt-1 bg-white px-2 py-1 rounded shadow text-[10px] font-black whitespace-nowrap">KDA 123X • 45 km/h</div>
-                  </div>
-                  
-                  <div className="absolute top-[60%] left-[65%]">
-                    <div className="w-8 h-8 bg-amber-500 rounded-full border-2 border-white shadow-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
-                    </div>
-                    <div className="mt-1 bg-white px-2 py-1 rounded shadow text-[10px] font-black whitespace-nowrap">KCD 456Y • Parked</div>
-                  </div>
-
-                  <div className="absolute inset-0 flex items-center justify-center bg-white/60 backdrop-blur-sm z-10 opacity-0 hover:opacity-100 transition-opacity duration-300">
-                    <div className="bg-white p-6 rounded-2xl shadow-xl text-center max-w-sm">
-                      <svg className="w-12 h-12 text-blue-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                      <h4 className="font-black text-lg text-slate-900 mb-2">Protracker Credentials Needed</h4>
-                      <p className="text-sm text-slate-500 mb-4 font-medium">To replace this mock map with actual live tracking data, we need your Protrack API token.</p>
-                      <p className="text-[10px] font-bold text-slate-400 bg-slate-50 p-2 rounded">Awaiting API keys setup...</p>
-                    </div>
-                  </div>
+              <div className="space-y-2">
+                <h3 className="font-black text-2xl text-slate-900 tracking-tight">Live GPS Vehicle Tracking</h3>
+                <p className="text-sm font-medium text-slate-500">Monitor vehicle geolocation and playback history on your Protrack platform.</p>
+              </div>
+              
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Tracking Portal URL</label>
+                  <input 
+                    type="url" 
+                    value={trackingUrl} 
+                    onChange={e => setTrackingUrl(e.target.value)} 
+                    className="w-full p-3 border-[1.5px] border-slate-200 rounded-xl text-sm font-bold text-slate-800 outline-none bg-white transition focus:border-blue-400 shadow-sm"
+                  />
                 </div>
-
-                {/* Sidebar Vehicle List */}
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-lg shadow-slate-200/50 p-6 flex flex-col">
-                  <h3 className="font-black text-sm text-slate-900 mb-4 uppercase tracking-widest border-b border-slate-100 pb-2">Active Trackers</h3>
-                  <div className="flex-1 overflow-y-auto space-y-3 pr-2">
-                    {fleet.filter(c => c.status === 'rented').map(car => (
-                      <div key={car.id} className="p-3 border border-slate-200 rounded-xl hover:border-blue-400 transition cursor-pointer">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <p className="font-bold text-sm text-slate-900">{car.plate}</p>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{car.make} {car.model}</p>
-                          </div>
-                          <span className="flex h-2 w-2 relative">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 mt-3">
-                          <div className="bg-slate-50 rounded p-1.5 text-center">
-                            <p className="text-[8px] font-bold text-slate-400 uppercase">Speed</p>
-                            <p className="text-xs font-black text-slate-700">{Math.floor(Math.random() * 60)} km/h</p>
-                          </div>
-                          <div className="bg-slate-50 rounded p-1.5 text-center">
-                            <p className="text-[8px] font-bold text-slate-400 uppercase">Status</p>
-                            <p className="text-xs font-black text-emerald-600">Moving</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    {fleet.filter(c => c.status === 'rented').length === 0 && (
-                      <div className="text-center py-10 text-slate-400 font-bold text-sm">No vehicles currently on the road.</div>
-                    )}
-                  </div>
-                </div>
+                <a 
+                  href={trackingUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl text-sm transition shadow-lg shadow-blue-500/20 inline-flex items-center justify-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                  Go to Tracking Console
+                </a>
               </div>
             </div>
           ) : null}
@@ -1542,6 +1597,7 @@ export default function BujatechAdmin() {
         <button onClick={() => setActiveTab('tracking')} className={`flex flex-col items-center justify-center w-full py-2 transition ${activeTab === 'tracking' ? 'text-blue-600' : 'text-slate-400'}`}>
           <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg> <span className="text-[9px] font-bold uppercase tracking-wider">Track</span>
         </button>
+
         <button onClick={() => setActiveTab('leases')} className={`flex flex-col items-center justify-center w-full py-2 transition ${activeTab === 'leases' ? 'text-blue-600' : 'text-slate-400'}`}>
           <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg> <span className="text-[9px] font-bold uppercase tracking-wider">Leases</span>
         </button>
@@ -1683,47 +1739,87 @@ export default function BujatechAdmin() {
                   <div className="flex flex-col md:flex-row gap-5 items-end">
                     <div className="flex-1 w-full">
                       <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Pickup Date & Time</label>
-                      <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
-                          <svg className="h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-center">
+                        <div className="relative sm:col-span-3">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
+                            <svg className="h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                          </div>
+                          <DatePicker 
+                            selected={bookingData.pickupDate} 
+                            onChange={(date: Date | null) => {
+                              if (date) {
+                                const [h, m] = pickupTime.split(':');
+                                date.setHours(Number(h), Number(m));
+                              }
+                              setBookingData({...bookingData, pickupDate: date});
+                            }} 
+                            dateFormat="MMMM d, yyyy" 
+                            className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white shadow-sm hover:border-blue-300" 
+                            placeholderText="Select Date"
+                            wrapperClassName="w-full"
+                          />
                         </div>
-                        <DatePicker 
-                          selected={bookingData.pickupDate} 
-                          onChange={(date: Date | null) => setBookingData({...bookingData, pickupDate: date})} 
-                          showTimeSelect 
-                          timeFormat="HH:mm" 
-                          timeIntervals={30} 
-                          timeCaption="Time" 
-                          dateFormat="MMMM d, yyyy h:mm aa" 
-                          className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white shadow-sm hover:border-blue-300" 
-                          placeholderText="Select pickup date"
-                          wrapperClassName="w-full"
-                        />
+                        <div className="sm:col-span-2">
+                          <input 
+                            type="time" 
+                            value={pickupTime} 
+                            onChange={e => {
+                              setPickupTime(e.target.value);
+                              if (bookingData.pickupDate) {
+                                const d = new Date(bookingData.pickupDate);
+                                const [h, m] = e.target.value.split(':');
+                                d.setHours(Number(h), Number(m));
+                                setBookingData({...bookingData, pickupDate: d});
+                              }
+                            }} 
+                            className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white shadow-sm hover:border-blue-300"
+                          />
+                        </div>
                       </div>
                     </div>
 
-                    <div className="hidden md:flex h-12 w-10 items-center justify-center text-slate-300">
-                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                    <div className="hidden md:flex h-12 w-6 items-center justify-center text-slate-300">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
                     </div>
 
                     <div className="flex-1 w-full">
                       <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Return Date & Time</label>
-                      <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
-                          <svg className="h-5 w-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-center">
+                        <div className="relative sm:col-span-3">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
+                            <svg className="h-5 w-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                          </div>
+                          <DatePicker 
+                            selected={bookingData.returnDate} 
+                            onChange={(date: Date | null) => {
+                              if (date) {
+                                const [h, m] = returnTime.split(':');
+                                date.setHours(Number(h), Number(m));
+                              }
+                              setBookingData({...bookingData, returnDate: date});
+                            }} 
+                            dateFormat="MMMM d, yyyy" 
+                            className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-indigo-400 transition bg-white shadow-sm hover:border-indigo-300" 
+                            placeholderText="Select Date"
+                            wrapperClassName="w-full"
+                          />
                         </div>
-                        <DatePicker 
-                          selected={bookingData.returnDate} 
-                          onChange={(date: Date | null) => setBookingData({...bookingData, returnDate: date})} 
-                          showTimeSelect 
-                          timeFormat="HH:mm" 
-                          timeIntervals={30} 
-                          timeCaption="Time" 
-                          dateFormat="MMMM d, yyyy h:mm aa" 
-                          className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-indigo-400 transition bg-white shadow-sm hover:border-indigo-300" 
-                          placeholderText="Select return date"
-                          wrapperClassName="w-full"
-                        />
+                        <div className="sm:col-span-2">
+                          <input 
+                            type="time" 
+                            value={returnTime} 
+                            onChange={e => {
+                              setReturnTime(e.target.value);
+                              if (bookingData.returnDate) {
+                                const d = new Date(bookingData.returnDate);
+                                const [h, m] = e.target.value.split(':');
+                                d.setHours(Number(h), Number(m));
+                                setBookingData({...bookingData, returnDate: d});
+                              }
+                            }} 
+                            className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-indigo-400 transition bg-white shadow-sm hover:border-indigo-300"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
