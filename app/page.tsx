@@ -131,6 +131,7 @@ export default function BujatechAdmin() {
 
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAmountManuallyEdited, setIsAmountManuallyEdited] = useState(false);
   
   const [pickupTime, setPickupTime] = useState('10:00');
   const [returnTime, setReturnTime] = useState('10:00');
@@ -148,6 +149,37 @@ export default function BujatechAdmin() {
     refereeName: '', refereePhone: '', refereeId: '',
     idFront: null as File | null, idBack: null as File | null, dlFront: null as File | null, dlBack: null as File | null
   });
+
+  const openBooking = (carId?: string) => {
+    setIsAmountManuallyEdited(false);
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const currentTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    
+    setPickupTime(currentTime);
+    setReturnTime(currentTime);
+
+    const pickupDateWithTime = new Date(now);
+    pickupDateWithTime.setHours(now.getHours(), now.getMinutes());
+
+    const returnDateWithTime = new Date(tomorrow);
+    returnDateWithTime.setHours(now.getHours(), now.getMinutes());
+
+    setBookingData({
+      isCloudClient: false,
+      cloudIdFront: null, cloudIdBack: null, cloudDlFront: null, cloudDlBack: null,
+      carId: carId || '', destination: '', purpose: 'Personal / Leisure', 
+      pickupDate: pickupDateWithTime, returnDate: returnDateWithTime, 
+      amountPaid: '', paymentMethod: 'M-Pesa (Direct)',
+      customerName: '', phone: '', idNumber: '', altName: '', altPhone: '', altId: '', altRelationship: '', signature: '',
+      refereeName: '', refereePhone: '', refereeId: '',
+      idFront: null, idBack: null, dlFront: null, dlBack: null
+    });
+    setIsBookingOpen(true);
+  };
 
   // Fetch cars & customers
   const fetchCars = async () => {
@@ -255,6 +287,12 @@ export default function BujatechAdmin() {
     }
   }
 
+  useEffect(() => {
+    if (!isAmountManuallyEdited && totalCost > 0) {
+      setBookingData(prev => ({ ...prev, amountPaid: totalCost.toString() }));
+    }
+  }, [totalCost, isAmountManuallyEdited]);
+
   // Generate PDF
   const generateContractPDF = async () => {
     const element = document.getElementById('receipt-pdf-template');
@@ -284,6 +322,12 @@ export default function BujatechAdmin() {
   const handleReturningCustomer = (customerId: string) => {
     const customer = customersList.find(c => c.id === customerId);
     if (customer) {
+      const isOnTrip = leasesList.some(l => l.customer_id === customer.id && l.status === 'active');
+      if (isOnTrip) {
+        toast.error("Customer is currently on a trip and cannot be booked.");
+        return;
+      }
+
       setBookingData(prev => ({
         ...prev,
         isCloudClient: true,
@@ -368,15 +412,67 @@ export default function BujatechAdmin() {
     toast.loading("Uploading documents & saving lease...", { id: 'save-booking' });
 
     try {
-      // 1. Upsert Customer details (without document URLs first to get ID)
-      const { data: customerData, error: customerError } = await supabase.from('customers').upsert({
-        full_name: bookingData.customerName, phone: bookingData.phone, id_number: bookingData.idNumber,
-        alt_name: bookingData.altName, alt_phone: bookingData.altPhone, alt_id: bookingData.altId, alt_relationship: bookingData.altRelationship,
-        referee_name: bookingData.refereeName || null, referee_phone: bookingData.refereePhone || null, referee_id: bookingData.refereeId || null,
-        signature_data: bookingData.signature || null
-      }, { onConflict: 'id_number' }).select().single();
-      
-      if (customerError) throw customerError;
+      // Check if customer already exists by ID number
+      const { data: existingCust } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('id_number', bookingData.idNumber)
+        .maybeSingle();
+
+      let customerData;
+      if (existingCust) {
+        const isOnTrip = leasesList.some(l => l.customer_id === existingCust.id && l.status === 'active');
+        if (isOnTrip) {
+          toast.error("This customer is currently on a trip and cannot be booked until their current trip is completed.");
+          setIsSubmitting(false);
+          toast.dismiss('save-booking');
+          return;
+        }
+
+        // Update existing customer
+        const { data: updatedCust, error: updateError } = await supabase
+          .from('customers')
+          .update({
+            full_name: bookingData.customerName,
+            phone: bookingData.phone,
+            alt_name: bookingData.altName,
+            alt_phone: bookingData.altPhone,
+            alt_id: bookingData.altId,
+            alt_relationship: bookingData.altRelationship,
+            referee_name: bookingData.refereeName || null,
+            referee_phone: bookingData.refereePhone || null,
+            referee_id: bookingData.refereeId || null,
+            signature_data: bookingData.signature || existingCust.signature_data || null
+          })
+          .eq('id', existingCust.id)
+          .select()
+          .single();
+
+        if (updateError) throw updateError;
+        customerData = updatedCust;
+      } else {
+        // Insert new customer
+        const { data: newCust, error: insertError } = await supabase
+          .from('customers')
+          .insert({
+            full_name: bookingData.customerName,
+            phone: bookingData.phone,
+            id_number: bookingData.idNumber,
+            alt_name: bookingData.altName,
+            alt_phone: bookingData.altPhone,
+            alt_id: bookingData.altId,
+            alt_relationship: bookingData.altRelationship,
+            referee_name: bookingData.refereeName || null,
+            referee_phone: bookingData.refereePhone || null,
+            referee_id: bookingData.refereeId || null,
+            signature_data: bookingData.signature || null
+          })
+          .select()
+          .single();
+
+        if (insertError) throw insertError;
+        customerData = newCust;
+      }
 
       // 2. Upload Documents if they exist (only for new uploads)
       let idFrontUrl = bookingData.isCloudClient ? bookingData.cloudIdFront : null;
@@ -1020,7 +1116,7 @@ export default function BujatechAdmin() {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg> Add Vehicle
                 </button>
               )}
-              <button onClick={() => setIsBookingOpen(true)} className="flex-1 md:flex-none px-4 lg:px-5 py-3 bg-[#2563eb] text-white font-bold text-sm rounded-xl shadow-md hover:bg-blue-700 flex items-center justify-center gap-2 transition">
+               <button onClick={() => openBooking()} className="flex-1 md:flex-none px-4 lg:px-5 py-3 bg-[#2563eb] text-white font-bold text-sm rounded-xl shadow-md hover:bg-blue-700 flex items-center justify-center gap-2 transition">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
                 <span className="hidden md:inline">New Booking</span>
                 <span className="md:hidden">Book Car</span>
@@ -1105,8 +1201,8 @@ export default function BujatechAdmin() {
                       {isMaintenance && (
                         <button onClick={(e) => { e.stopPropagation(); handleUpdateMaintenance(car.id); }} className="flex-1 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold text-sm hover:bg-slate-50 transition">Update Status</button>
                       )}
-                      {isAvailable && (
-                        <button onClick={(e) => { e.stopPropagation(); setBookingData({...bookingData, carId: car.id}); setIsBookingOpen(true); }} className="flex-1 py-3 bg-[#0f172a] text-white rounded-xl font-bold text-sm hover:bg-black transition">
+                       {isAvailable && (
+                        <button onClick={(e) => { e.stopPropagation(); openBooking(car.id); }} className="flex-1 py-3 bg-[#0f172a] text-white rounded-xl font-bold text-sm hover:bg-black transition">
                           Book Car
                         </button>
                       )}
@@ -1737,13 +1833,17 @@ export default function BujatechAdmin() {
                       </select>
                     </div>
                   </div>
-                  <div className="flex flex-col md:flex-row gap-5 items-end">
-                    <div className="flex-1 w-full">
-                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Pickup Date & Time</label>
-                      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-center">
-                        <div className="relative sm:col-span-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Pickup Card */}
+                    <div className="bg-blue-50/40 p-4 rounded-xl border border-blue-100 flex flex-col justify-between">
+                      <div className="flex justify-between items-center mb-3">
+                        <label className="block text-[11px] font-black uppercase tracking-widest text-blue-600 pl-1">Pickup Date & Time</label>
+                        <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded">24-Hr Basis</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="sm:col-span-2 relative">
                           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
-                            <svg className="h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                            <svg className="h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                           </div>
                           <DatePicker 
                             selected={bookingData.pickupDate} 
@@ -1755,12 +1855,12 @@ export default function BujatechAdmin() {
                               setBookingData({...bookingData, pickupDate: date});
                             }} 
                             dateFormat="MMMM d, yyyy" 
-                            className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white shadow-sm hover:border-blue-300" 
+                            className="w-full pl-9 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white shadow-sm hover:border-blue-300" 
                             placeholderText="Select Date"
                             wrapperClassName="w-full"
                           />
                         </div>
-                        <div className="sm:col-span-2">
+                        <div className="sm:col-span-1 relative">
                           <input 
                             type="time" 
                             value={pickupTime} 
@@ -1773,22 +1873,22 @@ export default function BujatechAdmin() {
                                 setBookingData({...bookingData, pickupDate: d});
                               }
                             }} 
-                            className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white shadow-sm hover:border-blue-300"
+                            className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition bg-white shadow-sm hover:border-blue-300 cursor-pointer"
                           />
                         </div>
                       </div>
                     </div>
 
-                    <div className="hidden md:flex h-12 w-6 items-center justify-center text-slate-300">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
-                    </div>
-
-                    <div className="flex-1 w-full">
-                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Return Date & Time</label>
-                      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-center">
-                        <div className="relative sm:col-span-3">
+                    {/* Return Card */}
+                    <div className="bg-indigo-50/40 p-4 rounded-xl border border-indigo-100 flex flex-col justify-between">
+                      <div className="flex justify-between items-center mb-3">
+                        <label className="block text-[11px] font-black uppercase tracking-widest text-indigo-600 pl-1">Return Date & Time</label>
+                        <span className="text-[10px] bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded">Check-In</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="sm:col-span-2 relative">
                           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
-                            <svg className="h-5 w-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                            <svg className="h-4 w-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                           </div>
                           <DatePicker 
                             selected={bookingData.returnDate} 
@@ -1800,12 +1900,12 @@ export default function BujatechAdmin() {
                               setBookingData({...bookingData, returnDate: date});
                             }} 
                             dateFormat="MMMM d, yyyy" 
-                            className="w-full pl-10 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-indigo-400 transition bg-white shadow-sm hover:border-indigo-300" 
+                            className="w-full pl-9 p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-indigo-400 transition bg-white shadow-sm hover:border-indigo-300" 
                             placeholderText="Select Date"
                             wrapperClassName="w-full"
                           />
                         </div>
-                        <div className="sm:col-span-2">
+                        <div className="sm:col-span-1 relative">
                           <input 
                             type="time" 
                             value={returnTime} 
@@ -1818,7 +1918,7 @@ export default function BujatechAdmin() {
                                 setBookingData({...bookingData, returnDate: d});
                               }
                             }} 
-                            className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-indigo-400 transition bg-white shadow-sm hover:border-indigo-300"
+                            className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-indigo-400 transition bg-white shadow-sm hover:border-indigo-300 cursor-pointer"
                           />
                         </div>
                       </div>
@@ -1850,7 +1950,7 @@ export default function BujatechAdmin() {
                    <div className="grid grid-cols-2 gap-5">
                     <div>
                       <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Amount Paid (Full / Partial)</label>
-                      <input type="number" required value={bookingData.amountPaid} onChange={e => setBookingData({...bookingData, amountPaid: e.target.value})} placeholder="e.g. 5000" className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition placeholder:text-slate-400 placeholder:font-medium"/>
+                      <input type="number" required value={bookingData.amountPaid} onChange={e => { setIsAmountManuallyEdited(true); setBookingData({...bookingData, amountPaid: e.target.value}); }} placeholder="e.g. 5000" className="w-full p-3 border-[1.5px] border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-blue-400 transition placeholder:text-slate-400 placeholder:font-medium"/>
                     </div>
                     <div>
                       <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 pl-1">Payment Method</label>
@@ -1868,7 +1968,14 @@ export default function BujatechAdmin() {
                   <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-400">4. Identity & Contacts</h3>
                   <select defaultValue="" onChange={(e) => handleReturningCustomer(e.target.value)} className="text-[10px] font-bold text-blue-500 border-[1.5px] border-blue-200 bg-blue-50 px-2 py-1 rounded cursor-pointer max-w-[150px] truncate outline-none">
                     <option value="" disabled>+ Load Cloud Client</option>
-                    {customersList.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+                    {customersList.map(c => {
+                      const isOnTrip = leasesList.some(l => l.customer_id === c.id && l.status === 'active');
+                      return (
+                        <option key={c.id} value={c.id} disabled={isOnTrip}>
+                          {c.full_name} {isOnTrip ? '— (On a trip)' : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
                 <div className="border-[1.5px] border-slate-200 rounded-xl p-5 shadow-sm space-y-6">
